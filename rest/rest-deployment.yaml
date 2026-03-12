@@ -31,9 +31,15 @@ spec:
         - name: MINIO_PORT
           value: "9000"
         - name: MINIO_ACCESS_KEY
-          value: "rootuser"
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: access-key
         - name: MINIO_SECRET_KEY
-          value: "rootpass123"
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: secret-key
         - name: MINIO_BUCKET
           value: "demucs-bucket"
         - name: MINIO_SECURE

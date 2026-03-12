@@ -268,16 +268,29 @@ docker network rm lab7
 
 - Docker Desktop with Kubernetes enabled
 - Helm installed
-- MinIO deployed via Helm into `minio-ns` namespace:
-  ```bash
-  kubectl create namespace minio-ns
-  helm install minio-proj minio/minio -n minio-ns -f minio/minio-config.yaml
-  ```
-- nginx ingress controller installed:
-  ```bash
-  kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
-  kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx
-  ```
+
+**1. Deploy MinIO via Helm into `minio-ns`:**
+```bash
+kubectl create namespace minio-ns
+helm repo add minio https://charts.min.io/
+helm install minio-proj minio/minio -n minio-ns -f minio/minio-config.yaml
+```
+
+**2. Install the nginx ingress controller** (required — the cluster has none by default):
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx
+```
+Without this step `kubectl get ingress` will show no ADDRESS and all HTTP requests will fail.
+
+**3. Create the MinIO credentials secret in the default namespace** (required before REST and worker pods can start):
+```bash
+kubectl create secret generic minio-credentials \
+  --from-literal=access-key=rootuser \
+  --from-literal=secret-key=rootpass123
+```
+The values must match `minio/minio-config.yaml` (`auth.rootUser` / `auth.rootPassword`).
+Both `rest-deployment.yaml` and `worker-deployment.yaml` reference this secret via `secretKeyRef`.
 
 ### Push images
 
@@ -367,6 +380,8 @@ The Helm values in `minio/minio-config.yaml` are the authoritative source for in
 | FastAPI startup hang | Removed blocking MinIO call from startup; `ensure_bucket()` called lazily on first `POST /apiv1/separate` |
 | MinIO `BadStatusLine` / TLS error in containers | Added `MINIO_SECURE` env var; defaults `false`; was previously hardcoded literal |
 | Worker container exits immediately (code 0) | Base image `xserrat/facebook-demucs` defines its own `ENTRYPOINT`; overridden with `ENTRYPOINT ["python3", "worker-server.py"]` in worker Dockerfile |
-| Ingress ADDRESS empty, no controller | Installed `ingress-nginx` controller; added `spec.ingressClassName: nginx` (deprecated annotation alone insufficient for K8s 1.18+) |
+| Ingress ADDRESS empty, no controller | Installed `ingress-nginx` controller; replaced deprecated `kubernetes.io/ingress.class` annotation with `spec.ingressClassName: nginx` |
+| Stale worker pods during rollout | Added `strategy: Recreate` to worker deployment; prevents two worker pods competing on the same Redis queue during rolling update |
+| MinIO credentials hardcoded in YAML | Replaced literal values with `secretKeyRef` referencing `minio-credentials` secret; secret must be created before deploying |
 | `torchcodec` import error in worker | Added `diffq` and `torchcodec` to `requirements-worker.txt` and worker Dockerfile |
 | Hardcoded `localhost:5000` callback in test script | Made callback URL configurable via `CALLBACK_URL` env var; disabled by default |
