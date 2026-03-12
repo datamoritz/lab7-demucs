@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+LABEL maintainer="PUT_YOUR_EMAIL_HERE"
+
+WORKDIR /srv
+
+COPY requirements-rest.txt .
+RUN pip install --no-cache-dir -r requirements-rest.txt
+
+COPY rest-server.py .
+
+CMD ["python3", "rest-server.py"]

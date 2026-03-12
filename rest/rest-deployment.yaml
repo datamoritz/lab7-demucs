@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rest
+spec:
+  selector:
+    matchLabels:
+      app: rest
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: rest
+    spec:
+      containers:
+      - name: rest
+        image: mokn4989/demucs-rest:latest
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+        ports:
+        - containerPort: 5001
+        env:
+        - name: REDIS_HOST
+          value: "redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: MINIO_HOST
+          value: "minio"
+        - name: MINIO_PORT
+          value: "9000"
+        - name: MINIO_ACCESS_KEY
+          value: "rootuser"
+        - name: MINIO_SECRET_KEY
+          value: "rootpass123"
+        - name: MINIO_BUCKET
+          value: "demucs-bucket"
+        - name: MINIO_SECURE
+          value: "false"
+        - name: REST_PORT
+          value: "5001"

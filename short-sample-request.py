@@ -9,9 +9,15 @@ import glob
 
 
 #
-# Use localhost & port 5000 if not specified by environment variable REST
+# Use localhost & port 5001 if not specified by environment variable REST
 #
-REST = os.getenv("REST") or "localhost:5000"
+REST = os.getenv("REST") or "localhost:5001"
+
+#
+# Optional callback URL — set CALLBACK_URL env var to enable.
+# Left empty by default so container/local tests don't fail on unreachable callbacks.
+#
+CALLBACK_URL = os.getenv("CALLBACK_URL") or ""
 
 ##
 # The following routine makes a JSON REST query of the specified type
@@ -42,10 +48,10 @@ for mp3 in glob.glob("data/short*mp3"):
         data={
             "mp3": base64.b64encode( open(mp3, "rb").read() ).decode('utf-8'),
             "callback": {
-                "url": "http://localhost:5000",
-                "data": {"mp3": mp3, 
+                "url": CALLBACK_URL,
+                "data": {"mp3": mp3,
                          "data": "to be returned"}
-            }
+            } if CALLBACK_URL else None
         },
         verbose=True
         )

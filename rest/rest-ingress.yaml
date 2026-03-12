@@ -10,7 +10,14 @@ metadata:
     kubernetes.io/ingress.class: "nginx"
     nginx.ingress.kubernetes.io/proxy-body-size: 16m
 spec:
+  ingressClassName: nginx
   rules:
-#
-# Your ingress rules here
-#
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: rest-service
+            port:
+              number: 5001

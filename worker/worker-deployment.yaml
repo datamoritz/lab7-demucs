@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  selector:
+    matchLabels:
+      app: worker
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      # Demucs is CPU and memory intensive — allow long-running jobs to finish
+      terminationGracePeriodSeconds: 600
+      containers:
+      - name: worker
+        image: mokn4989/demucs-worker:latest
+        resources:
+          requests:
+            cpu: 500m
+            memory: 4Gi
+          limits:
+            memory: 8Gi
+        env:
+        - name: REDIS_HOST
+          value: "redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: MINIO_HOST
+          value: "minio"
+        - name: MINIO_PORT
+          value: "9000"
+        - name: MINIO_ACCESS_KEY
+          value: "rootuser"
+        - name: MINIO_SECRET_KEY
+          value: "rootpass123"
+        - name: MINIO_SECURE
+          value: "false"
