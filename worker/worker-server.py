@@ -55,7 +55,7 @@ def log(level: str, msg: str) -> None:
 # ---------------------------------------------------------------------------
 def process(job: dict) -> None:
     songhash  = job["hash"]
-    model     = job.get("model", "mdx_extra_q")
+    model     = job.get("model", "htdemucs")
     bucket    = job["bucket"]
     input_key = job["key"]          # e.g. "queue/<hash>.mp3"
     callback  = job.get("callback")
@@ -74,11 +74,13 @@ def process(job: dict) -> None:
             log("error", f"Download failed: {exc}")
             return
 
-        # 2. Run Demucs
+        # 2. Run Demucs (CPU-only; --jobs 1 keeps peak RAM predictable)
         cmd = (
             f"python3 -m demucs.separate "
             f"--out {output_dir} "
             f"--mp3 "
+            f"--device cpu "
+            f"--jobs 1 "
             f"-n {model} "
             f"{input_path}"
         )

@@ -13,6 +13,7 @@ from typing import Any, Optional
 import redis
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from minio import Minio
 from minio.error import S3Error
@@ -68,6 +69,19 @@ def ensure_bucket() -> None:
 
 app = FastAPI(title="MSaaS REST Service")
 
+# ---------------------------------------------------------------------------
+# CORS — required for browser-based frontends (e.g. Vercel)
+# Restrict allow_origins to your actual domain in production:
+#   allow_origins=["https://your-app.vercel.app"]
+# ---------------------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "HEAD"],
+    allow_headers=["*"],
+)
+
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -78,9 +92,26 @@ def health():
     return {"status": "Music Separation Server running"}
 
 
+@app.get("/apiv1/health")
+def detailed_health():
+    """Detailed health check used by the frontend status panel."""
+    status = {"api": True, "redis": False, "minio": False, "workers": 1, "k8s": False}
+    try:
+        redis_client.ping()
+        status["redis"] = True
+    except Exception:
+        pass
+    try:
+        minio_client.bucket_exists(MINIO_BUCKET)
+        status["minio"] = True
+    except Exception:
+        pass
+    return status
+
+
 class SeparateRequest(BaseModel):
     mp3: str                      # base64-encoded MP3 bytes
-    model: Optional[str] = "mdx_extra_q"
+    model: Optional[str] = "htdemucs"
     callback: Optional[Any] = None
 
 
@@ -113,7 +144,7 @@ def separate(req: SeparateRequest):
     # 4. Enqueue job to Redis
     job = {
         "hash": songhash,
-        "model": req.model or "mdx_extra_q",
+        "model": req.model or "htdemucs",
         "callback": req.callback,
         "bucket": MINIO_BUCKET,
         "key": object_key,

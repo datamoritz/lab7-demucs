@@ -1,0 +1,102 @@
+services:
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    # Append-only persistence; cap memory so it doesn't grow unbounded
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+
+  # ── MinIO (object storage) ─────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minio123}
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # ── MinIO bucket init (runs once, then exits) ──────────────────────────────
+  minio-init:
+    image: minio/mc:latest
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio123}
+      MINIO_BUCKET:     ${MINIO_BUCKET:-demucs-bucket}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY &&
+        mc mb --ignore-existing local/$$MINIO_BUCKET &&
+        mc anonymous set public local/$$MINIO_BUCKET &&
+        echo 'Bucket ready: '$$MINIO_BUCKET
+      "
+
+  # ── FastAPI REST service ───────────────────────────────────────────────────
+  api:
+    build:
+      context: ./rest
+      dockerfile: Dockerfile-rest
+    restart: unless-stopped
+    ports:
+      - "5001:5001"        # Only this port is exposed to the public
+    environment:
+      REDIS_HOST:      redis
+      REDIS_PORT:      6379
+      MINIO_HOST:      minio
+      MINIO_PORT:      9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio123}
+      MINIO_BUCKET:    ${MINIO_BUCKET:-demucs-bucket}
+      MINIO_SECURE:    "false"
+      REST_PORT:       5001
+    depends_on:
+      redis:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+
+  # ── Demucs worker ──────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      REDIS_HOST:      redis
+      REDIS_PORT:      6379
+      MINIO_HOST:      minio
+      MINIO_PORT:      9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio123}
+      MINIO_BUCKET:    ${MINIO_BUCKET:-demucs-bucket}
+      MINIO_SECURE:    "false"
+      # Limit PyTorch CPU thread usage to avoid memory & scheduler contention
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    depends_on:
+      redis:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 4G   # Hard cap — prevents a runaway job from OOM-killing the host
+
+volumes:
+  redis-data:   # Persists Redis queue & logs across restarts
+  minio-data:   # Persists all uploaded MP3s and separated stems
