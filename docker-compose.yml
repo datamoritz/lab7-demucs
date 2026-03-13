@@ -4,15 +4,25 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    mem_limit: 256m
     volumes:
       - redis-data:/data
-    # Append-only persistence; cap memory so it doesn't grow unbounded
-    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    command: >
+      redis-server
+        --appendonly yes
+        --maxmemory 128mb
+        --maxmemory-policy allkeys-lru
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # ── MinIO (object storage) ─────────────────────────────────────────────────
+  # ── MinIO ──────────────────────────────────────────────────────────────────
   minio:
     image: minio/minio:latest
     restart: unless-stopped
+    mem_limit: 512m
     environment:
       MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minio123}
@@ -25,8 +35,13 @@ services:
       timeout: 5s
       retries: 6
       start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # ── MinIO bucket init (runs once, then exits) ──────────────────────────────
+  # ── MinIO bucket init (one-shot, exits after creating bucket) ──────────────
   minio-init:
     image: minio/mc:latest
     restart: "no"
@@ -42,32 +57,49 @@ services:
         mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY &&
         mc mb --ignore-existing local/$$MINIO_BUCKET &&
         mc anonymous set public local/$$MINIO_BUCKET &&
-        echo 'Bucket ready: '$$MINIO_BUCKET
+        echo 'MinIO ready — bucket: '$$MINIO_BUCKET
       "
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "1"
 
-  # ── FastAPI REST service ───────────────────────────────────────────────────
+  # ── FastAPI REST API ────────────────────────────────────────────────────────
   api:
     build:
       context: ./rest
       dockerfile: Dockerfile-rest
     restart: unless-stopped
+    mem_limit: 512m
     ports:
-      - "5001:5001"        # Only this port is exposed to the public
+      - "5001:5001"        # Only port exposed to the public
     environment:
-      REDIS_HOST:      redis
-      REDIS_PORT:      6379
-      MINIO_HOST:      minio
-      MINIO_PORT:      9000
+      REDIS_HOST:       redis
+      REDIS_PORT:       6379
+      MINIO_HOST:       minio
+      MINIO_PORT:       9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio123}
-      MINIO_BUCKET:    ${MINIO_BUCKET:-demucs-bucket}
-      MINIO_SECURE:    "false"
-      REST_PORT:       5001
+      MINIO_BUCKET:     ${MINIO_BUCKET:-demucs-bucket}
+      MINIO_SECURE:     "false"
+      REST_PORT:        5001
     depends_on:
       redis:
         condition: service_started
       minio-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5001/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   # ── Demucs worker ──────────────────────────────────────────────────────────
   worker:
@@ -75,28 +107,31 @@ services:
       context: ./worker
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 3500m          # Hard cap — Demucs (htdemucs, CPU) peaks at ~2.5 GB
+    stop_grace_period: 10m    # Let an in-progress Demucs job finish before shutdown
     environment:
-      REDIS_HOST:      redis
-      REDIS_PORT:      6379
-      MINIO_HOST:      minio
-      MINIO_PORT:      9000
+      REDIS_HOST:       redis
+      REDIS_PORT:       6379
+      MINIO_HOST:       minio
+      MINIO_PORT:       9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio123}
-      MINIO_BUCKET:    ${MINIO_BUCKET:-demucs-bucket}
-      MINIO_SECURE:    "false"
-      # Limit PyTorch CPU thread usage to avoid memory & scheduler contention
-      OMP_NUM_THREADS: "2"
-      MKL_NUM_THREADS: "2"
+      MINIO_BUCKET:     ${MINIO_BUCKET:-demucs-bucket}
+      MINIO_SECURE:     "false"
+      OMP_NUM_THREADS:  "2"   # Prevent PyTorch spawning excessive OS threads
+      MKL_NUM_THREADS:  "2"
     depends_on:
       redis:
         condition: service_started
       minio-init:
         condition: service_completed_successfully
-    deploy:
-      resources:
-        limits:
-          memory: 4G   # Hard cap — prevents a runaway job from OOM-killing the host
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
+# ── Volumes ─────────────────────────────────────────────────────────────────
 volumes:
-  redis-data:   # Persists Redis queue & logs across restarts
-  minio-data:   # Persists all uploaded MP3s and separated stems
+  redis-data:    # Persists queue state across restarts
+  minio-data:    # Persists all uploaded MP3s and separated stems
