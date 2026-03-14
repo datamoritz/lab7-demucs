@@ -4,7 +4,7 @@
 Deploy once from your local machine:
     modal deploy worker/modal_demucs.py
 
-The worker then calls it remotely via modal.Function.lookup().
+The worker then calls it remotely via modal.Function.from_name().
 """
 
 import modal
@@ -12,12 +12,15 @@ import modal
 app = modal.App("demucs-gpu-separation")
 
 # ── Container image ────────────────────────────────────────────────────────────
-# Install in strict order: numpy first (pinned 1.x), then torch, then demucs.
-# Model weights are lazy-loaded at runtime (first invocation) to avoid fragile
-# build-time preload failures.
+# Dependency order matters:
+#   1. numpy==1.26.4  — must come first; demucs/diffq break on NumPy 2.x
+#   2. torch (CUDA)   — GPU wheels
+#   3. demucs + deps
+#   4. run_commands   — bake mdx_extra_q weights into the image layer so
+#                       cold starts never download ~80 MB from fbaipublicfiles.
 demucs_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "git")
+    .apt_install("ffmpeg", "git", "build-essential")
     .pip_install("numpy==1.26.4")
     .pip_install(
         "torch==2.1.2",
@@ -30,6 +33,12 @@ demucs_image = (
         "julius",
         "lameenc",
         "soundfile",
+    )
+    .run_commands(
+        # Pre-download mdx_extra_q weights into the cached image layer.
+        # numpy is already pinned above so this no longer raises
+        # "RuntimeError: Numpy is not available".
+        "python3 -c \"from demucs.pretrained import get_model; get_model('mdx_extra_q')\""
     )
 )
 
@@ -64,10 +73,6 @@ def separate_stems(
     import os
     import subprocess
     import tempfile
-
-    # Lazy-load model weights on first invocation (cached by Modal container reuse)
-    from demucs.pretrained import get_model as _get_model
-    _get_model(model)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"{songhash}.mp3")
