@@ -78,7 +78,7 @@
       </div>
       <div>
         <h1 class="text-lg font-bold tracking-tight leading-none">StemSplit AI</h1>
-        <p class="text-xs text-slate-500 leading-none mt-0.5">Distributed music stem separation</p>
+        <p class="text-xs text-slate-500 leading-none mt-0.5">Separate a song into vocals, drums, bass, and other instruments.</p>
       </div>
       <div class="ml-auto flex items-center gap-2">
         <span id="queue-badge" class="text-xs font-mono bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full">waiting: — · active: —</span>
@@ -91,11 +91,7 @@
     <!-- Hero -->
     <section class="space-y-3">
       <p class="text-slate-600 text-sm leading-relaxed max-w-xl">
-        AI-powered stem separation using a distributed pipeline.
-        Uploads to <span class="font-medium text-slate-700">FastAPI</span>,
-        queues via <span class="font-medium text-slate-700">Redis</span>,
-        processes on a <span class="font-medium text-slate-700">Docker Compose worker</span> using Demucs —
-        separating into <span class="font-medium text-slate-700">vocals, drums, bass</span> and <span class="font-medium text-slate-700">other</span>.
+        AI-powered music stem separation. Upload a track or try one of the demo samples to see the full distributed processing pipeline in action.
       </p>
       <ol class="flex flex-wrap gap-x-6 gap-y-2">
         <li class="flex items-center gap-1.5 text-xs text-slate-400">
@@ -116,7 +112,7 @@
     <!-- System Status -->
     <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
       <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">System Status</h2>
-      <div class="grid grid-cols-2 gap-x-10 gap-y-2.5 font-mono text-xs">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-2.5 font-mono text-xs">
 
         <div class="flex items-center gap-3">
           <span class="text-slate-500 w-28 flex-shrink-0">API server</span>
@@ -207,7 +203,7 @@
         <div class="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 flex flex-col gap-3">
           <div>
             <p class="text-sm font-semibold text-slate-700">Quick demo</p>
-            <p class="text-xs text-slate-400 mt-0.5 leading-relaxed">~10 s clip · finishes in ~1 min</p>
+            <p class="text-xs text-slate-400 mt-0.5 leading-relaxed">~10 s clip · finishes in ~20 s</p>
           </div>
           <button onclick="runSample('short')"
                   class="self-start flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg
@@ -221,7 +217,7 @@
         <div class="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 flex flex-col gap-3">
           <div>
             <p class="text-sm font-semibold text-slate-700">Longer demo</p>
-            <p class="text-xs text-slate-400 mt-0.5 leading-relaxed">~60 s clip · realistic pipeline demo</p>
+            <p class="text-xs text-slate-400 mt-0.5 leading-relaxed">~45 s clip · finishes in ~2 min</p>
           </div>
           <button onclick="runSample('long')"
                   class="self-start flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg
@@ -251,11 +247,8 @@
 
         <!-- Job metadata -->
         <div class="grid grid-cols-3 gap-3 text-xs">
-          <div class="col-span-2 bg-slate-50 rounded-lg px-4 py-3">
-            <p class="text-slate-400 mb-1">Job ID</p>
-            <p id="job-id" class="font-mono text-slate-700 truncate tracking-wide">—</p>
-          </div>
-          <div class="bg-slate-50 rounded-lg px-4 py-3">
+          <span id="job-id" class="hidden"></span>
+          <div class="col-span-3 bg-slate-50 rounded-lg px-4 py-3">
             <p class="text-slate-400 mb-1">Processing time</p>
             <p id="elapsed-time" class="font-mono text-slate-700">00:00</p>
           </div>
