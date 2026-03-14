@@ -80,11 +80,9 @@
         <h1 class="text-lg font-bold tracking-tight leading-none">StemSplit AI</h1>
         <p class="text-xs text-slate-500 leading-none mt-0.5">Separate a song into vocals, drums, bass, and more.</p>
       </div>
-      <div class="ml-auto flex items-center gap-2">
-        <div id="queue-badge" class="text-xs font-mono bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full flex flex-col sm:flex-row sm:gap-1 items-end sm:items-center text-right">
-          <span id="queue-waiting">waiting: —</span>
-          <span id="queue-active">active: —</span>
-        </div>
+      <div id="queue-badge" class="ml-auto hidden">
+        <span id="queue-waiting"></span>
+        <span id="queue-active"></span>
       </div>
     </div>
   </header>
