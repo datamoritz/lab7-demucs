@@ -18,6 +18,7 @@ app = modal.App("demucs-gpu-separation")
 demucs_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg", "git")
+    .pip_install("numpy")
     .pip_install(
         "torch==2.1.2",
         "torchaudio==2.1.2",
