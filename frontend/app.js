@@ -422,7 +422,8 @@ async function pollQueue() {
     const data       = await res.json();
     const waiting    = data.jobs_waiting    ?? (data.queue || []).length;
     const processing = data.jobs_processing ?? 0;
-    queueBadge.textContent = `waiting: ${waiting} · active: ${processing}`;
+    document.getElementById("queue-waiting").textContent = `waiting: ${waiting}`;
+    document.getElementById("queue-active").textContent  = `active: ${processing}`;
   } catch (_) {}
 }
 
