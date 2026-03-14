@@ -80,7 +80,6 @@ def process(job: dict) -> None:
             f"--out {output_dir} "
             f"--mp3 "
             f"--device cpu "
-            f"--jobs 1 "
             f"-n {model} "
             f"{input_path}"
         )

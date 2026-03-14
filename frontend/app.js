@@ -87,16 +87,13 @@ async function checkSystemStatus() {
   let redisOk = true;
   let workerCount = null;
   let minioOk = false;
-  let k8sOk = false;
-
   try {
     const res = await fetch(`${API_BASE}/apiv1/health`, { signal: AbortSignal.timeout(4000) });
     if (res.ok) {
       const data = await res.json();
-      apiOk      = true;
-      redisOk    = data.redis  ?? true;
-      minioOk    = data.minio  ?? true;
-      k8sOk      = data.k8s   ?? true;
+      apiOk       = true;
+      redisOk     = data.redis   ?? true;
+      minioOk     = data.minio   ?? true;
       workerCount = data.workers ?? null;
     }
   } catch (_) {
@@ -106,8 +103,7 @@ async function checkSystemStatus() {
       if (res.ok) {
         apiOk   = true;
         redisOk = true;
-        minioOk = true;  // MinIO must be reachable if API is fully up
-        k8sOk   = true;
+        minioOk = true;
       }
     } catch (_) { /* unreachable */ }
   }
@@ -116,7 +112,7 @@ async function checkSystemStatus() {
     setSysStatus("sys-api",     "ok",  "running");
     setSysStatus("sys-redis",   redisOk ? "ok" : "err",  redisOk ? "connected" : "unreachable");
     setSysStatus("sys-minio",   minioOk ? "ok" : "err", minioOk ? "connected" : "unreachable");
-    setSysStatus("sys-k8s",     k8sOk  ? "ok" : "err", k8sOk   ? "cluster active" : "unavailable");
+    setSysStatus("sys-k8s",     "ok",  "Docker Compose");
     setSysStatus("sys-workers", "ok",
       workerCount !== null ? `${workerCount} active` : "1 active");
   } else {
