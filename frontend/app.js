@@ -323,7 +323,7 @@ function startStatusPoller() {
     updateQueueCounts(data.jobs_waiting ?? "—", data.jobs_processing ?? "—");
 
     if (data.status === "done") {
-      jobFinished();
+      jobFinished(data.instrumental === true);
     } else if (data.status === "failed") {
       jobFailed(data.error || data.stage_message || "Processing failed on the worker.");
     } else if (data.status === "processing" || data.status === "queued") {
@@ -347,7 +347,7 @@ function applyStage(stage, message) {
   if (message) addLog(prefix + message);
 }
 
-function jobFinished() {
+function jobFinished(instrumentalAvailable) {
   clearInterval(statusPoller);
   clearInterval(elapsedTimer);
 
@@ -357,8 +357,8 @@ function jobFinished() {
 
   if (finalTimeEl) finalTimeEl.textContent = elapsedEl.textContent;
 
-  saveJobToStorage();
-  showDownloadPanel();
+  saveJobToStorage(instrumentalAvailable);
+  showDownloadPanel(instrumentalAvailable);
 }
 
 function jobFailed(errorMsg) {
@@ -387,12 +387,13 @@ function updateQueueCounts(waiting, processing) {
 // ─── localStorage persistence ─────────────────────────────────────────────────
 const STORAGE_KEY = "stemsplit_last_job";
 
-function saveJobToStorage() {
+function saveJobToStorage(instrumentalAvailable) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      hash:      currentHash,
-      finalTime: elapsedEl.textContent,
-      savedAt:   Date.now(),
+      hash:         currentHash,
+      finalTime:    elapsedEl.textContent,
+      savedAt:      Date.now(),
+      instrumental: instrumentalAvailable === true,
     }));
   } catch (_) {}
 }
@@ -409,7 +410,7 @@ function restoreJobFromStorage() {
     showJobSection();
     setPipelineStep(5, true);
     setStatus("finished", false);
-    showDownloadPanel();
+    showDownloadPanel(job.instrumental === true);
   } catch (_) {}
 }
 
@@ -429,11 +430,11 @@ pollQueue();
 setInterval(pollQueue, QUEUE_POLL_INTERVAL);
 
 // ─── Download panel ───────────────────────────────────────────────────────────
-function showDownloadPanel() {
+function showDownloadPanel(instrumentalAvailable) {
   downloadSection.classList.remove("hidden");
   downloadSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
   renderStemCards(currentHash);
-  renderDerivedMix(currentHash);
+  if (instrumentalAvailable) renderDerivedMix(currentHash);
 }
 
 function renderStemCards(hash) {

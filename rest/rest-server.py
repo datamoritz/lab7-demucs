@@ -231,6 +231,7 @@ def job_status(songhash: str):
         "current_stage":   record.get("current_stage", ""),
         "stage_message":   record.get("stage_message", ""),
         "error":           record.get("error") or None,
+        "instrumental":    record.get("instrumental", "0") == "1",
         "jobs_waiting":    jobs_waiting,
         "jobs_processing": jobs_processing,
     }

@@ -4,6 +4,7 @@
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 
@@ -157,26 +158,41 @@ def process(job: dict) -> None:
 
             # 4. Mix instrumental (bass + drums + other) — non-fatal if it fails
             instrumental_path = os.path.join(stems_dir, "instrumental.mp3")
-            mix_cmd = (
-                f"ffmpeg -y -loglevel error "
-                f"-i {os.path.join(stems_dir, 'bass.mp3')} "
-                f"-i {os.path.join(stems_dir, 'drums.mp3')} "
-                f"-i {os.path.join(stems_dir, 'other.mp3')} "
-                f"-filter_complex amix=inputs=3 "
-                f"{instrumental_path}"
-            )
             log("debug", "Mixing instrumental track")
-            if os.system(mix_cmd) == 0 and os.path.exists(instrumental_path):
-                try:
+            instrumental_ok = False
+            try:
+                result = subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-i", os.path.join(stems_dir, "bass.mp3"),
+                        "-i", os.path.join(stems_dir, "drums.mp3"),
+                        "-i", os.path.join(stems_dir, "other.mp3"),
+                        "-filter_complex", "amix=inputs=3:duration=first",
+                        "-codec:a", "libmp3lame", "-q:a", "2",
+                        instrumental_path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode == 0 and os.path.exists(instrumental_path):
                     minio_client.fput_object(
                         bucket, f"output/{songhash}-instrumental.mp3", instrumental_path,
                         content_type="audio/mpeg",
                     )
                     log("info", f"Uploaded output/{songhash}-instrumental.mp3")
-                except S3Error as exc:
-                    log("error", f"Instrumental upload failed (non-fatal): {exc}")
-            else:
-                log("error", f"ffmpeg instrumental mix failed (non-fatal) for {songhash}")
+                    instrumental_ok = True
+                else:
+                    stderr_tail = result.stderr[-600:].strip() if result.stderr else "(no output)"
+                    log("error", f"ffmpeg exit {result.returncode}: {stderr_tail}")
+            except S3Error as exc:
+                log("error", f"Instrumental upload failed (non-fatal): {exc}")
+            except Exception as exc:
+                log("error", f"Instrumental mix error (non-fatal): {exc}")
+            try:
+                redis_client.hset(f"job:{songhash}", "instrumental", "1" if instrumental_ok else "0")
+            except Exception:
+                pass
 
         # 5. Fire callback if provided (best-effort, failures are ignored)
         if callback and isinstance(callback, dict) and callback.get("url"):
