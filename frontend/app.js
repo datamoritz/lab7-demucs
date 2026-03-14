@@ -1,5 +1,5 @@
 // ─── Config ──────────────────────────────────────────────────────────────────
-const API_BASE = "http://5.78.134.84:5001";
+const API_BASE = "https://5.78.134.84.sslip.io";
 
 const QUEUE_POLL_INTERVAL  = 5000;
 const STATUS_POLL_INTERVAL = 3000;

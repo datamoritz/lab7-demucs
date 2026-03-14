@@ -1,0 +1,9 @@
+# Caddy automatically provisions and renews a TLS certificate via Let's Encrypt.
+# Replace the hostname below with your actual domain or subdomain.
+#
+# Zero-cost option:  5.78.134.84.sslip.io   (no registration needed)
+# Own domain option: api.yourdomain.com      (requires an A record → 5.78.134.84)
+
+5.78.134.84.sslip.io {
+    reverse_proxy api:5001
+}

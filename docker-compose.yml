@@ -65,6 +65,26 @@ services:
         max-size: "5m"
         max-file: "1"
 
+  # ── Caddy (HTTPS reverse proxy) ────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "80:80"            # Required for Let's Encrypt HTTP-01 challenge
+      - "443:443"          # Public HTTPS
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data   # TLS certificates (persists across restarts)
+      - caddy-config:/config
+    depends_on:
+      - api
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ── FastAPI REST API ────────────────────────────────────────────────────────
   api:
     build:
@@ -73,7 +93,7 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     ports:
-      - "5001:5001"        # Only port exposed to the public
+      - "127.0.0.1:5001:5001"   # Localhost-only: for server-side curl tests
     environment:
       REDIS_HOST:       redis
       REDIS_PORT:       6379
@@ -136,3 +156,5 @@ services:
 volumes:
   redis-data:    # Persists queue state across restarts
   minio-data:    # Persists all uploaded MP3s and separated stems
+  caddy-data:    # TLS certificates — must persist or Caddy re-issues on every restart
+  caddy-config:  # Caddy internal config cache
