@@ -14,7 +14,7 @@ RUN pip3 install --no-cache-dir \
     "minio==7.2.9" \
     "redis==5.0.8" \
     requests \
-    modal
+    "modal>=0.73"
 
 WORKDIR /srv
 COPY worker-server.py .
