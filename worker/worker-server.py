@@ -120,7 +120,7 @@ def process(job: dict) -> None:
                 log("info", f"Routing to Modal GPU ({file_size}B > {LOCAL_THRESHOLD_BYTES}B threshold)")
                 set_job_status(songhash, "processing",
                                current_stage="separating",
-                               stage_message="Running Demucs on Modal GPU (T4)")
+                               stage_message="Running Demucs on Modal GPU (A10G)")
 
                 with open(input_path, "rb") as f:
                     mp3_bytes = f.read()
