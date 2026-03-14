@@ -46,7 +46,7 @@ demucs_image = (
 # ── GPU function ───────────────────────────────────────────────────────────────
 @app.function(
     image=demucs_image,
-    gpu="T4",
+    gpu="A10G",
     timeout=600,    # 10 min ceiling per job
     memory=8192,    # 8 GB RAM
 )
