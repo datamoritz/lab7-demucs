@@ -146,7 +146,12 @@ def separate(req: SeparateRequest):
     # 4. Write job status BEFORE enqueuing so the worker never picks up a job
     #    whose status key doesn't exist yet.
     try:
-        redis_client.hset(f"job:{songhash}", mapping={"status": "queued", "error": ""})
+        redis_client.hset(f"job:{songhash}", mapping={
+            "status":        "queued",
+            "current_stage": "queued",
+            "stage_message": "Waiting in queue",
+            "error":         "",
+        })
         redis_client.expire(f"job:{songhash}", JOB_TTL)
     except Exception as exc:
         log("error", f"Failed to write job status for {songhash}: {exc}")
@@ -216,6 +221,8 @@ def job_status(songhash: str):
     return {
         "hash":            songhash,
         "status":          record.get("status", "unknown"),
+        "current_stage":   record.get("current_stage", ""),
+        "stage_message":   record.get("stage_message", ""),
         "error":           record.get("error") or None,
         "jobs_waiting":    jobs_waiting,
         "jobs_processing": jobs_processing,

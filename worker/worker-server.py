@@ -50,10 +50,16 @@ def log(level: str, msg: str) -> None:
     print(entry, flush=True)
 
 
-def set_job_status(songhash: str, status: str, error: str = "") -> None:
+def set_job_status(songhash: str, status: str, current_stage: str = "",
+                   stage_message: str = "", error: str = "") -> None:
     """Write job status to Redis. Best-effort — failures are logged but not fatal."""
     try:
-        redis_client.hset(f"job:{songhash}", mapping={"status": status, "error": error})
+        redis_client.hset(f"job:{songhash}", mapping={
+            "status":        status,
+            "current_stage": current_stage or status,
+            "stage_message": stage_message,
+            "error":         error,
+        })
     except Exception as exc:
         log("error", f"Failed to update job status for {songhash}: {exc}")
 
@@ -69,7 +75,9 @@ def process(job: dict) -> None:
     callback  = job.get("callback")
 
     log("info", f"Processing {songhash}")
-    set_job_status(songhash, "processing")
+    set_job_status(songhash, "processing",
+                   current_stage="downloading_input",
+                   stage_message="Downloading input from storage")
     try:
         redis_client.sadd("jobs:processing", songhash)
     except Exception:
@@ -85,11 +93,16 @@ def process(job: dict) -> None:
             try:
                 minio_client.fget_object(bucket, input_key, input_path)
             except S3Error as exc:
-                log("error", f"Download failed: {exc}")
-                set_job_status(songhash, "failed", f"Failed to download input file: {exc}")
+                err = f"Failed to download input file: {exc}"
+                log("error", err)
+                set_job_status(songhash, "failed",
+                               current_stage="failed", stage_message=err, error=err)
                 return
 
             # 2. Run Demucs (CPU-only)
+            set_job_status(songhash, "processing",
+                           current_stage="separating",
+                           stage_message="Running Demucs stem separation")
             cmd = (
                 f"python3 -m demucs.separate "
                 f"--out {output_dir} "
@@ -102,13 +115,17 @@ def process(job: dict) -> None:
             rc = os.system(cmd)
             exit_code = rc >> 8  # os.system returns raw waitpid status
             if rc != 0:
-                msg = f"Demucs exited with code {exit_code} for {songhash}"
-                log("error", msg)
-                set_job_status(songhash, "failed", f"Demucs exited with code {exit_code}")
+                err = f"Demucs exited with code {exit_code}"
+                log("error", f"{err} for {songhash}")
+                set_job_status(songhash, "failed",
+                               current_stage="failed", stage_message=err, error=err)
                 return
 
             # 3. Upload the four separated tracks to MinIO
             #    Demucs writes to: <output_dir>/<model>/<songhash>/<part>.mp3
+            set_job_status(songhash, "processing",
+                           current_stage="uploading_outputs",
+                           stage_message="Uploading separated stems to storage")
             stems_dir   = os.path.join(output_dir, model, songhash)
             upload_errs = []
             for part in PARTS:
@@ -133,7 +150,9 @@ def process(job: dict) -> None:
                     upload_errs.append(msg)
 
             if upload_errs:
-                set_job_status(songhash, "failed", upload_errs[0])
+                err = upload_errs[0]
+                set_job_status(songhash, "failed",
+                               current_stage="failed", stage_message=err, error=err)
                 return
 
         # 4. Fire callback if provided (best-effort, failures are ignored)
@@ -144,7 +163,9 @@ def process(job: dict) -> None:
             except Exception as exc:
                 log("debug", f"Callback failed (ignored): {exc}")
 
-        set_job_status(songhash, "done")
+        set_job_status(songhash, "done",
+                       current_stage="done",
+                       stage_message="All stems ready")
         log("info", f"Done {songhash}")
 
     finally:

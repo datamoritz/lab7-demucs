@@ -14,25 +14,40 @@ const STEMS = [
   { key: "other",  label: "Other",  icon: "🎹", bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
 ];
 
-// ─── Log lines ───────────────────────────────────────────────────────────────
+// ─── Log lines (only real frontend-side events) ───────────────────────────────
 const LOG_LINES = {
-  uploading:         "[REST]    Encoding file to base64...",
-  submitted:         "[REST]    Job submitted → hash received",
-  queued:            "[QUEUE]   Added to Redis queue: toWorker",
-  processing:        "[WORKER]  Worker picked up job — loading Demucs model",
-  demucs:            "[PROCESS] Running stem separation (vocals, drums, bass, other)",
-  uploading_results: "[STORAGE] Uploading stems → demucs-bucket/output/",
-  finished:          "[DONE]    Separation complete — stems ready",
+  uploading: "[REST]    Encoding file to base64...",
+  submitted: "[REST]    Job submitted → hash received",
+  queued:    "[QUEUE]   Added to Redis queue: toWorker",
+  finished:  "[DONE]    Separation complete — stems ready",
+};
+
+// Maps backend current_stage → pipeline step index (0–5)
+const STAGE_TO_STEP = {
+  queued:             1,
+  downloading_input:  2,
+  separating:         3,
+  uploading_outputs:  4,
+  done:               5,
+};
+
+// Maps backend current_stage → log prefix
+const STAGE_LOG_PREFIX = {
+  downloading_input: "[WORKER]  ",
+  separating:        "[PROCESS] ",
+  uploading_outputs: "[STORAGE] ",
+  done:              "[DONE]    ",
+  failed:            "[ERROR]   ",
 };
 
 // ─── App state ───────────────────────────────────────────────────────────────
-let selectedFile   = null;
-let currentHash    = null;
-let startTime      = null;
-let elapsedTimer   = null;
-let statusPoller   = null;
-let processingTick = 0;
-let activePipeStep = -1;
+let selectedFile    = null;
+let currentHash     = null;
+let startTime       = null;
+let elapsedTimer    = null;
+let statusPoller    = null;
+let lastKnownStage  = "";   // tracks last displayed stage to avoid duplicate log entries
+let activePipeStep  = -1;
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 const dropZone         = document.getElementById("drop-zone");
@@ -245,7 +260,7 @@ function fileToBase64(file) {
   });
 }
 
-// ─── Status polling (real job status endpoint) ────────────────────────────────
+// ─── Status polling — driven entirely by real backend stage data ──────────────
 function startStatusPoller() {
   setStatus("queued", true);
   setPipelineStep(1, false);
@@ -266,42 +281,38 @@ function startStatusPoller() {
       const res = await fetch(`${API_BASE}/apiv1/status/${currentHash}`, {
         signal: AbortSignal.timeout(4000),
       });
-      // 404 = status key not yet written (race on first poll) — keep waiting
+      // 404 = status key not yet written (tight race on first poll) — keep waiting
       if (!res.ok) return;
       data = await res.json();
     } catch (_) {
       return; // network error — keep waiting
     }
 
-    // Update the queue counters in the job info panel
     updateQueueCounts(data.jobs_waiting ?? "—", data.jobs_processing ?? "—");
 
     if (data.status === "done") {
       jobFinished();
     } else if (data.status === "failed") {
-      jobFailed(data.error || "Processing failed on the worker.");
-    } else if (data.status === "processing") {
-      advanceProcessingStage();
+      jobFailed(data.error || data.stage_message || "Processing failed on the worker.");
+    } else if (data.status === "processing" || data.status === "queued") {
+      applyStage(data.current_stage, data.stage_message);
     }
-    // status === "queued": nothing to advance yet
   }, STATUS_POLL_INTERVAL);
 }
 
-// Advance pipeline visuals while the real status is "processing".
-// Ticks fire every STATUS_POLL_INTERVAL ms — thresholds are approximate hints.
-function advanceProcessingStage() {
-  processingTick++;
-  if (processingTick === 1) {
-    setStatus("processing", true);
-    setPipelineStep(2, false);
-    addLog(LOG_LINES.processing);
-  } else if (processingTick === 3) {
-    setPipelineStep(3, false);
-    addLog(LOG_LINES.demucs);
-  } else if (processingTick === 6) {
-    setPipelineStep(4, false);
-    addLog(LOG_LINES.uploading_results);
-  }
+// Apply a real backend stage to the pipeline stepper and log panel.
+// Only logs and advances the step when the stage actually changes.
+function applyStage(stage, message) {
+  if (!stage || stage === lastKnownStage) return;
+  lastKnownStage = stage;
+
+  const stepIdx = STAGE_TO_STEP[stage];
+  if (stepIdx !== undefined) setPipelineStep(stepIdx, false);
+
+  const label  = stage.replace(/_/g, " ");
+  const prefix = STAGE_LOG_PREFIX[stage] || "[WORKER]  ";
+  setStatus(label, true);
+  if (message) addLog(prefix + message);
 }
 
 function jobFinished() {
@@ -517,8 +528,8 @@ function resetJobUI() {
   clearInterval(elapsedTimer);
   clearInterval(statusPoller);
   try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
-  currentHash    = null;
-  processingTick = 0;
+  currentHash       = null;
+  lastKnownStage    = "";
 
   // Reset status badge styling
   const badge = document.getElementById("status-badge");
