@@ -127,7 +127,7 @@ def process(job: dict) -> None:
 
                 try:
                     import modal as _modal
-                    _fn = _modal.Function.lookup("demucs-gpu-separation", "separate_stems")
+                    _fn = _modal.Function.from_name("demucs-gpu-separation", "separate_stems")
                     stem_bytes = _fn.remote(mp3_bytes, songhash, model)
                 except Exception as exc:
                     err = f"Modal GPU separation failed: {exc}"
