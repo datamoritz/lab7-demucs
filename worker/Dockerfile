@@ -13,7 +13,8 @@ RUN pip3 install --no-cache-dir \
     torchcodec \
     "minio==7.2.9" \
     "redis==5.0.8" \
-    requests
+    requests \
+    modal
 
 WORKDIR /srv
 COPY worker-server.py .
