@@ -12,13 +12,13 @@ import modal
 app = modal.App("demucs-gpu-separation")
 
 # ── Container image ────────────────────────────────────────────────────────────
-# PyTorch (CUDA 11.8 wheels) + Demucs + ffmpeg.
-# Model weights for mdx_extra_q are baked into the image layer at build time
-# so cold-start doesn't re-download ~80 MB on every invocation.
+# Install in strict order: numpy first (pinned 1.x), then torch, then demucs.
+# Model weights are lazy-loaded at runtime (first invocation) to avoid fragile
+# build-time preload failures.
 demucs_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg", "git")
-    .pip_install("numpy")
+    .pip_install("numpy==1.26.4")
     .pip_install(
         "torch==2.1.2",
         "torchaudio==2.1.2",
@@ -30,10 +30,6 @@ demucs_image = (
         "julius",
         "lameenc",
         "soundfile",
-    )
-    .run_commands(
-        # Pre-download mdx_extra_q weights into the cached image layer
-        "python3 -c \"from demucs.pretrained import get_model; get_model('mdx_extra_q')\""
     )
 )
 
@@ -69,15 +65,17 @@ def separate_stems(
     import subprocess
     import tempfile
 
+    # Lazy-load model weights on first invocation (cached by Modal container reuse)
+    from demucs.pretrained import get_model as _get_model
+    _get_model(model)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"{songhash}.mp3")
         output_dir = os.path.join(tmpdir, "output")
 
-        # Write input bytes to disk
         with open(input_path, "wb") as f:
             f.write(mp3_bytes)
 
-        # Run Demucs on GPU
         cmd = [
             "python3", "-m", "demucs.separate",
             "--out", output_dir,
