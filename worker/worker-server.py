@@ -155,7 +155,30 @@ def process(job: dict) -> None:
                                current_stage="failed", stage_message=err, error=err)
                 return
 
-        # 4. Fire callback if provided (best-effort, failures are ignored)
+            # 4. Mix instrumental (bass + drums + other) — non-fatal if it fails
+            instrumental_path = os.path.join(stems_dir, "instrumental.mp3")
+            mix_cmd = (
+                f"ffmpeg -y -loglevel error "
+                f"-i {os.path.join(stems_dir, 'bass.mp3')} "
+                f"-i {os.path.join(stems_dir, 'drums.mp3')} "
+                f"-i {os.path.join(stems_dir, 'other.mp3')} "
+                f"-filter_complex amix=inputs=3 "
+                f"{instrumental_path}"
+            )
+            log("debug", "Mixing instrumental track")
+            if os.system(mix_cmd) == 0 and os.path.exists(instrumental_path):
+                try:
+                    minio_client.fput_object(
+                        bucket, f"output/{songhash}-instrumental.mp3", instrumental_path,
+                        content_type="audio/mpeg",
+                    )
+                    log("info", f"Uploaded output/{songhash}-instrumental.mp3")
+                except S3Error as exc:
+                    log("error", f"Instrumental upload failed (non-fatal): {exc}")
+            else:
+                log("error", f"ffmpeg instrumental mix failed (non-fatal) for {songhash}")
+
+        # 5. Fire callback if provided (best-effort, failures are ignored)
         if callback and isinstance(callback, dict) and callback.get("url"):
             try:
                 requests.post(callback["url"], json=callback.get("data"), timeout=5)

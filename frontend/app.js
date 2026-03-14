@@ -70,6 +70,8 @@ const queueBadge       = document.getElementById("queue-badge");
 const logPanel         = document.getElementById("log-panel");
 const pipelineSteps    = document.querySelectorAll("#pipeline-steps .pipeline-step");
 const pipelineFill     = document.getElementById("pipeline-fill");
+const derivedMixSection= document.getElementById("derived-mix-section");
+const derivedMixGrid   = document.getElementById("derived-mix-grid");
 
 // ─── System status ────────────────────────────────────────────────────────────
 function setSysStatus(id, state, label) {
@@ -431,6 +433,7 @@ function showDownloadPanel() {
   downloadSection.classList.remove("hidden");
   downloadSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
   renderStemCards(currentHash);
+  renderDerivedMix(currentHash);
 }
 
 function renderStemCards(hash) {
@@ -505,6 +508,77 @@ function renderStemCards(hash) {
   });
 }
 
+function renderDerivedMix(hash) {
+  derivedMixGrid.innerHTML = "";
+  const url  = `${API_BASE}/apiv1/track/${hash}/instrumental`;
+  const card = document.createElement("div");
+  card.className = "rounded-xl border border-indigo-200 overflow-hidden";
+
+  card.innerHTML = `
+    <div class="flex items-center gap-3 px-4 py-3 bg-indigo-50">
+      <span class="text-lg leading-none">🎼</span>
+      <div class="flex-1 min-w-0">
+        <p class="font-semibold text-sm text-indigo-700">Instrumental</p>
+        <p class="text-[11px] opacity-50 font-mono truncate">no vocals · bass + drums + other</p>
+      </div>
+      <button data-action="play"
+              class="play-btn flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+                     bg-white/70 hover:bg-white transition-colors text-indigo-700 flex-shrink-0">
+        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>
+        Play
+      </button>
+      <button data-action="download"
+              class="dl-btn flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+                     bg-white/70 hover:bg-white transition-colors text-indigo-700 flex-shrink-0">
+        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v13m0 0l-4-4m4 4l4-4M3 18h18"/>
+        </svg>
+        Save
+      </button>
+    </div>
+    <div class="audio-wrap hidden px-4 py-2.5 bg-white border-t border-indigo-200">
+      <audio controls class="w-full" style="height:36px;"></audio>
+    </div>`;
+
+  const playBtn  = card.querySelector(".play-btn");
+  const audioWrap= card.querySelector(".audio-wrap");
+  const audio    = card.querySelector("audio");
+
+  playBtn.addEventListener("click", () => {
+    const isOpen = !audioWrap.classList.contains("hidden");
+    document.querySelectorAll(".audio-wrap").forEach(w => {
+      if (w !== audioWrap) { w.classList.add("hidden"); w.querySelector("audio").pause(); }
+    });
+    document.querySelectorAll(".play-btn").forEach(b => {
+      if (b !== playBtn) b.innerHTML = b.innerHTML.replace("Stop", "Play")
+                                                  .replace('d="M6 4h4v16H6zM14 4h4v16h-4z"', 'd="M5 3l14 9-14 9V3z"');
+    });
+    if (isOpen) {
+      audioWrap.classList.add("hidden");
+      audio.pause();
+      playBtn.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
+      playBtn.childNodes[2].textContent = " Play";
+    } else {
+      if (!audio.src) audio.src = url;
+      audioWrap.classList.remove("hidden");
+      audio.play();
+      playBtn.querySelector("svg path").setAttribute("d", "M6 4h4v16H6zM14 4h4v16h-4z");
+      playBtn.childNodes[2].textContent = " Stop";
+    }
+  });
+  audio.addEventListener("ended", () => {
+    audioWrap.classList.add("hidden");
+    playBtn.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
+    playBtn.childNodes[2].textContent = " Play";
+  });
+
+  card.querySelector(".dl-btn").addEventListener("click", () =>
+    forceDownload(url, "instrumental.mp3", card.querySelector(".dl-btn")));
+
+  derivedMixGrid.appendChild(card);
+  derivedMixSection.classList.remove("hidden");
+}
+
 async function forceDownload(url, filename, btn) {
   const original = btn.innerHTML;
   btn.textContent = "…";
@@ -573,6 +647,8 @@ function resetJobUI() {
   logPanel.innerHTML       = "";
   downloadSection.classList.add("hidden");
   downloadGrid.innerHTML   = "";
+  derivedMixSection.classList.add("hidden");
+  derivedMixGrid.innerHTML = "";
   jobIdEl.textContent      = "—";
   elapsedEl.textContent    = "00:00";
   if (finalTimeEl) finalTimeEl.textContent = "—";

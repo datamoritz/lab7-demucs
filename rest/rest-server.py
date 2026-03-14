@@ -286,7 +286,7 @@ def run_sample(sample_id: str):
     return {"hash": songhash, "reason": f"Sample '{sample_id}' enqueued for separation"}
 
 
-VALID_TRACKS = {"bass", "drums", "vocals", "other"}
+VALID_TRACKS = {"bass", "drums", "vocals", "other", "instrumental"}
 
 
 @app.get("/apiv1/track/{songhash}/{track}")
