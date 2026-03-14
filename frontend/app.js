@@ -3,7 +3,7 @@ const API_BASE = "https://mystery-incomplete-speak-prison.trycloudflare.com";
 
 const QUEUE_POLL_INTERVAL  = 5000;
 const STATUS_POLL_INTERVAL = 3000;
-const JOB_TIMEOUT_MS       = 10 * 60 * 1000;
+const JOB_TIMEOUT_MS       = 30 * 60 * 1000;
 const SYS_POLL_INTERVAL    = 10000;
 
 // ─── Stem definitions ────────────────────────────────────────────────────────
@@ -271,8 +271,8 @@ function startStatusPoller() {
   statusPoller = setInterval(async () => {
     if (Date.now() > deadline) {
       clearInterval(statusPoller);
-      setStatus("timed out", false);
-      addLog("[ERROR]   Job timed out after 10 minutes.");
+      setStatus("still waiting…", false);
+      addLog("[INFO]    Processing is taking longer than expected. The job may still be running on the server.");
       return;
     }
 
