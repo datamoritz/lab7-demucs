@@ -81,7 +81,7 @@
         <p class="text-xs text-slate-500 leading-none mt-0.5">Distributed music stem separation</p>
       </div>
       <div class="ml-auto flex items-center gap-2">
-        <span id="queue-badge" class="text-xs font-mono bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full">queue: —</span>
+        <span id="queue-badge" class="text-xs font-mono bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full">waiting: — · active: —</span>
       </div>
     </div>
   </header>
@@ -290,15 +290,28 @@
         <!-- Queue info -->
         <div class="grid grid-cols-2 gap-3 text-xs">
           <div class="bg-slate-50 rounded-lg px-4 py-2.5">
-            <p class="text-slate-400 mb-0.5">Queue position</p>
-            <p id="queue-pos" class="font-mono text-slate-700">—</p>
+            <p class="text-slate-400 mb-0.5">Jobs waiting</p>
+            <p id="jobs-waiting" class="font-mono text-slate-700">—</p>
           </div>
           <div class="bg-slate-50 rounded-lg px-4 py-2.5">
-            <p class="text-slate-400 mb-0.5">Jobs in queue</p>
-            <p id="queue-count" class="font-mono text-slate-700">—</p>
+            <p class="text-slate-400 mb-0.5">Jobs processing</p>
+            <p id="jobs-processing" class="font-mono text-slate-700">—</p>
           </div>
         </div>
 
+      </div>
+
+      <!-- Error banner (shown only on failure) -->
+      <div id="job-error" class="hidden bg-red-50 border border-red-200 rounded-xl px-5 py-4">
+        <div class="flex items-start gap-3">
+          <svg class="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+          </svg>
+          <div>
+            <p class="text-sm font-semibold text-red-700">Processing failed</p>
+            <p id="job-error-msg" class="text-xs text-red-600 mt-0.5">An error occurred on the worker.</p>
+          </div>
+        </div>
       </div>
 
       <!-- Terminal log -->

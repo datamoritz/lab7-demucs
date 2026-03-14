@@ -50,6 +50,14 @@ def log(level: str, msg: str) -> None:
     print(entry, flush=True)
 
 
+def set_job_status(songhash: str, status: str, error: str = "") -> None:
+    """Write job status to Redis. Best-effort — failures are logged but not fatal."""
+    try:
+        redis_client.hset(f"job:{songhash}", mapping={"status": status, "error": error})
+    except Exception as exc:
+        log("error", f"Failed to update job status for {songhash}: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Job processing
 # ---------------------------------------------------------------------------
@@ -61,69 +69,102 @@ def process(job: dict) -> None:
     callback  = job.get("callback")
 
     log("info", f"Processing {songhash}")
+    set_job_status(songhash, "processing")
+    try:
+        redis_client.sadd("jobs:processing", songhash)
+    except Exception:
+        pass
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        input_path  = os.path.join(tmpdir, f"{songhash}.mp3")
-        output_dir  = os.path.join(tmpdir, "output")
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path  = os.path.join(tmpdir, f"{songhash}.mp3")
+            output_dir  = os.path.join(tmpdir, "output")
 
-        # 1. Download input MP3 from MinIO
-        log("debug", f"Downloading {bucket}/{input_key}")
-        try:
-            minio_client.fget_object(bucket, input_key, input_path)
-        except S3Error as exc:
-            log("error", f"Download failed: {exc}")
-            return
-
-        # 2. Run Demucs (CPU-only; --jobs 1 keeps peak RAM predictable)
-        cmd = (
-            f"python3 -m demucs.separate "
-            f"--out {output_dir} "
-            f"--mp3 "
-            f"--device cpu "
-            f"-n {model} "
-            f"{input_path}"
-        )
-        log("debug", f"Running: {cmd}")
-        rc = os.system(cmd)
-        if rc != 0:
-            log("error", f"Demucs exited with code {rc} for {songhash}")
-            return
-
-        # 3. Upload the four separated tracks to MinIO
-        #    Demucs writes to: <output_dir>/<model>/<songhash>/<part>.mp3
-        stems_dir = os.path.join(output_dir, model, songhash)
-        for part in PARTS:
-            local_file  = os.path.join(stems_dir, f"{part}.mp3")
-            object_key  = f"output/{songhash}-{part}.mp3"
-
-            if not os.path.exists(local_file):
-                log("error", f"Expected output not found: {local_file}")
-                continue
-
+            # 1. Download input MP3 from MinIO
+            log("debug", f"Downloading {bucket}/{input_key}")
             try:
-                minio_client.fput_object(
-                    bucket, object_key, local_file,
-                    content_type="audio/mpeg",
-                )
-                log("info", f"Uploaded {object_key}")
+                minio_client.fget_object(bucket, input_key, input_path)
             except S3Error as exc:
-                log("error", f"Upload failed for {object_key}: {exc}")
+                log("error", f"Download failed: {exc}")
+                set_job_status(songhash, "failed", f"Failed to download input file: {exc}")
+                return
 
-    # 4. Fire callback if provided (best-effort, failures are ignored)
-    if callback and isinstance(callback, dict) and callback.get("url"):
+            # 2. Run Demucs (CPU-only)
+            cmd = (
+                f"python3 -m demucs.separate "
+                f"--out {output_dir} "
+                f"--mp3 "
+                f"--device cpu "
+                f"-n {model} "
+                f"{input_path}"
+            )
+            log("debug", f"Running: {cmd}")
+            rc = os.system(cmd)
+            exit_code = rc >> 8  # os.system returns raw waitpid status
+            if rc != 0:
+                msg = f"Demucs exited with code {exit_code} for {songhash}"
+                log("error", msg)
+                set_job_status(songhash, "failed", f"Demucs exited with code {exit_code}")
+                return
+
+            # 3. Upload the four separated tracks to MinIO
+            #    Demucs writes to: <output_dir>/<model>/<songhash>/<part>.mp3
+            stems_dir   = os.path.join(output_dir, model, songhash)
+            upload_errs = []
+            for part in PARTS:
+                local_file = os.path.join(stems_dir, f"{part}.mp3")
+                object_key = f"output/{songhash}-{part}.mp3"
+
+                if not os.path.exists(local_file):
+                    msg = f"Expected output not found: {local_file}"
+                    log("error", msg)
+                    upload_errs.append(msg)
+                    continue
+
+                try:
+                    minio_client.fput_object(
+                        bucket, object_key, local_file,
+                        content_type="audio/mpeg",
+                    )
+                    log("info", f"Uploaded {object_key}")
+                except S3Error as exc:
+                    msg = f"Upload failed for {object_key}: {exc}"
+                    log("error", msg)
+                    upload_errs.append(msg)
+
+            if upload_errs:
+                set_job_status(songhash, "failed", upload_errs[0])
+                return
+
+        # 4. Fire callback if provided (best-effort, failures are ignored)
+        if callback and isinstance(callback, dict) and callback.get("url"):
+            try:
+                requests.post(callback["url"], json=callback.get("data"), timeout=5)
+                log("debug", f"Callback sent to {callback['url']}")
+            except Exception as exc:
+                log("debug", f"Callback failed (ignored): {exc}")
+
+        set_job_status(songhash, "done")
+        log("info", f"Done {songhash}")
+
+    finally:
+        # Always remove from the processing set, even if an exception escapes
         try:
-            requests.post(callback["url"], json=callback.get("data"), timeout=5)
-            log("debug", f"Callback sent to {callback['url']}")
-        except Exception as exc:
-            log("debug", f"Callback failed (ignored): {exc}")
-
-    log("info", f"Done {songhash}")
+            redis_client.srem("jobs:processing", songhash)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 def main() -> None:
+    # Clear stale processing entries from a previous crash/restart
+    try:
+        redis_client.delete("jobs:processing")
+        log("info", "Cleared stale jobs:processing set on startup")
+    except Exception:
+        pass
     log("info", "Worker started, waiting for jobs on 'toWorker'")
     while True:
         try:

@@ -14,60 +14,47 @@ const STEMS = [
   { key: "other",  label: "Other",  icon: "🎹", bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
 ];
 
-// ─── Log lines per stage ─────────────────────────────────────────────────────
+// ─── Log lines ───────────────────────────────────────────────────────────────
 const LOG_LINES = {
-  uploading:           "[REST]    Encoding file to base64...",
-  submitted:           "[REST]    Job submitted → hash received",
-  queued:              "[QUEUE]   Added to Redis list: toWorker",
-  "worker started":    "[K8S]     Worker pod scheduled",
-  "loading model":     "[WORKER]  Loading Demucs htdemucs model",
-  "processing audio":  "[PROCESS] Running stem separation",
-  "separating stems":  "[PROCESS] Separating: vocals, drums, bass, other",
-  "uploading results": "[STORAGE] Uploading stems → demucs-bucket/output/",
-  finished:            "[DONE]    Separation complete — stems ready",
-};
-
-// ─── Pipeline step mapping ────────────────────────────────────────────────────
-// Maps app state → pipeline step index (0–5)
-const STATE_TO_STEP = {
-  uploading:           0,
-  queued:              1,
-  "worker started":    2,
-  "loading model":     2,
-  "processing audio":  3,
-  "separating stems":  3,
-  "uploading results": 4,
-  finished:            5,
+  uploading:         "[REST]    Encoding file to base64...",
+  submitted:         "[REST]    Job submitted → hash received",
+  queued:            "[QUEUE]   Added to Redis queue: toWorker",
+  processing:        "[WORKER]  Worker picked up job — loading Demucs model",
+  demucs:            "[PROCESS] Running stem separation (vocals, drums, bass, other)",
+  uploading_results: "[STORAGE] Uploading stems → demucs-bucket/output/",
+  finished:          "[DONE]    Separation complete — stems ready",
 };
 
 // ─── App state ───────────────────────────────────────────────────────────────
-let selectedFile    = null;
-let currentHash     = null;
-let startTime       = null;
-let elapsedTimer    = null;
-let statusPoller    = null;
-let queuePoller     = null;
-let activePipeStep  = -1;
+let selectedFile   = null;
+let currentHash    = null;
+let startTime      = null;
+let elapsedTimer   = null;
+let statusPoller   = null;
+let processingTick = 0;
+let activePipeStep = -1;
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
-const dropZone        = document.getElementById("drop-zone");
-const fileInput       = document.getElementById("file-input");
-const fileNameEl      = document.getElementById("file-name");
-const uploadBtn       = document.getElementById("upload-btn");
-const jobSection      = document.getElementById("job-section");
-const downloadSection = document.getElementById("download-section");
-const downloadGrid    = document.getElementById("download-grid");
-const jobIdEl         = document.getElementById("job-id");
-const statusText      = document.getElementById("status-text");
-const statusSpinner   = document.getElementById("status-spinner");
-const elapsedEl       = document.getElementById("elapsed-time");
-const finalTimeEl     = document.getElementById("final-time");
-const queuePosEl      = document.getElementById("queue-pos");
-const queueCountEl    = document.getElementById("queue-count");
-const queueBadge      = document.getElementById("queue-badge");
-const logPanel        = document.getElementById("log-panel");
-const pipelineSteps   = document.querySelectorAll("#pipeline-steps .pipeline-step");
-const pipelineFill    = document.getElementById("pipeline-fill");
+const dropZone         = document.getElementById("drop-zone");
+const fileInput        = document.getElementById("file-input");
+const fileNameEl       = document.getElementById("file-name");
+const uploadBtn        = document.getElementById("upload-btn");
+const jobSection       = document.getElementById("job-section");
+const downloadSection  = document.getElementById("download-section");
+const downloadGrid     = document.getElementById("download-grid");
+const jobIdEl          = document.getElementById("job-id");
+const statusText       = document.getElementById("status-text");
+const statusSpinner    = document.getElementById("status-spinner");
+const elapsedEl        = document.getElementById("elapsed-time");
+const finalTimeEl      = document.getElementById("final-time");
+const jobsWaitingEl    = document.getElementById("jobs-waiting");
+const jobsProcessingEl = document.getElementById("jobs-processing");
+const jobErrorEl       = document.getElementById("job-error");
+const jobErrorMsgEl    = document.getElementById("job-error-msg");
+const queueBadge       = document.getElementById("queue-badge");
+const logPanel         = document.getElementById("log-panel");
+const pipelineSteps    = document.querySelectorAll("#pipeline-steps .pipeline-step");
+const pipelineFill     = document.getElementById("pipeline-fill");
 
 // ─── System status ────────────────────────────────────────────────────────────
 function setSysStatus(id, state, label) {
@@ -83,7 +70,6 @@ function setSysStatus(id, state, label) {
 }
 
 async function checkSystemStatus() {
-  // Try a dedicated health endpoint first; fall back to queue endpoint
   let apiOk = false;
   let redisOk = true;
   let workerCount = null;
@@ -91,28 +77,23 @@ async function checkSystemStatus() {
   try {
     const res = await fetch(`${API_BASE}/apiv1/health`, { signal: AbortSignal.timeout(4000) });
     if (res.ok) {
-      const data = await res.json();
+      const data  = await res.json();
       apiOk       = true;
       redisOk     = data.redis   ?? true;
       minioOk     = data.minio   ?? true;
       workerCount = data.workers ?? null;
     }
   } catch (_) {
-    // Health endpoint not available — infer from queue
     try {
       const res = await fetch(`${API_BASE}/apiv1/queue`, { signal: AbortSignal.timeout(4000) });
-      if (res.ok) {
-        apiOk   = true;
-        redisOk = true;
-        minioOk = true;
-      }
-    } catch (_) { /* unreachable */ }
+      if (res.ok) { apiOk = true; redisOk = true; minioOk = true; }
+    } catch (_) {}
   }
 
   if (apiOk) {
     setSysStatus("sys-api",     "ok",  "running");
     setSysStatus("sys-redis",   redisOk ? "ok" : "err",  redisOk ? "connected" : "unreachable");
-    setSysStatus("sys-minio",   minioOk ? "ok" : "err", minioOk ? "connected" : "unreachable");
+    setSysStatus("sys-minio",   minioOk ? "ok" : "err",  minioOk ? "connected" : "unreachable");
     setSysStatus("sys-k8s",     "ok",  "Docker Compose");
     setSysStatus("sys-workers", "ok",
       workerCount !== null ? `${workerCount} active` : "1 active");
@@ -125,13 +106,12 @@ async function checkSystemStatus() {
   }
 }
 
-// Run on load and every 10 s
 checkSystemStatus();
 setInterval(checkSystemStatus, SYS_POLL_INTERVAL);
 
 // ─── Pipeline stepper ─────────────────────────────────────────────────────────
 function setPipelineStep(activeIndex, isDone) {
-  const total = pipelineSteps.length - 1; // 5 gaps between 6 steps
+  const total = pipelineSteps.length - 1;
   pipelineSteps.forEach((step, i) => {
     const dot     = step.querySelector(".pipeline-step-dot");
     const check   = step.querySelector(".step-check");
@@ -144,7 +124,6 @@ function setPipelineStep(activeIndex, isDone) {
     dot.style.borderColor = "";
 
     if (i < activeIndex) {
-      // completed
       step.classList.add("step-done");
       dot.style.backgroundColor = "#6366f1";
       dot.style.borderColor = "#6366f1";
@@ -163,7 +142,6 @@ function setPipelineStep(activeIndex, isDone) {
     }
   });
 
-  // Update progress bar fill
   const pct = activeIndex === 0 ? 0 : Math.round((activeIndex / total) * 100);
   pipelineFill.style.width = `${pct}%`;
   activePipeStep = activeIndex;
@@ -251,10 +229,9 @@ uploadBtn.addEventListener("click", async () => {
   addLog(LOG_LINES.submitted);
   addLog(`[REST]    Job ID: ${hash}`);
 
-  startTime = Date.now();
+  startTime    = Date.now();
   elapsedTimer = setInterval(updateElapsed, 1000);
 
-  startQueuePoller();
   startStatusPoller();
 });
 
@@ -268,22 +245,10 @@ function fileToBase64(file) {
   });
 }
 
-// ─── Status polling ───────────────────────────────────────────────────────────
-let lastKnownState  = "queued";
-let stateProgressed = 0;
-
-const SIMULATED_STAGES = [
-  "queued",
-  "worker started",
-  "loading model",
-  "processing audio",
-  "separating stems",
-  "uploading results",
-];
-
+// ─── Status polling (real job status endpoint) ────────────────────────────────
 function startStatusPoller() {
   setStatus("queued", true);
-  setPipelineStep(STATE_TO_STEP["queued"], false);
+  setPipelineStep(1, false);
   addLog(LOG_LINES.queued);
 
   const deadline = Date.now() + JOB_TIMEOUT_MS;
@@ -296,30 +261,46 @@ function startStatusPoller() {
       return;
     }
 
+    let data;
     try {
-      const res = await fetch(`${API_BASE}/apiv1/track/${currentHash}/vocals`);
-      res.body?.cancel(); // status received — discard audio body immediately
-      if (res.ok) {
-        jobFinished();
-        return;
-      }
-    } catch (_) { /* keep waiting */ }
+      const res = await fetch(`${API_BASE}/apiv1/status/${currentHash}`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      // 404 = status key not yet written (race on first poll) — keep waiting
+      if (!res.ok) return;
+      data = await res.json();
+    } catch (_) {
+      return; // network error — keep waiting
+    }
 
-    advanceSimulatedStage();
+    // Update the queue counters in the job info panel
+    updateQueueCounts(data.jobs_waiting ?? "—", data.jobs_processing ?? "—");
+
+    if (data.status === "done") {
+      jobFinished();
+    } else if (data.status === "failed") {
+      jobFailed(data.error || "Processing failed on the worker.");
+    } else if (data.status === "processing") {
+      advanceProcessingStage();
+    }
+    // status === "queued": nothing to advance yet
   }, STATUS_POLL_INTERVAL);
 }
 
-function advanceSimulatedStage() {
-  if (stateProgressed < SIMULATED_STAGES.length - 1) {
-    stateProgressed++;
-    const stage = SIMULATED_STAGES[stateProgressed];
-    if (stage !== lastKnownState) {
-      lastKnownState = stage;
-      setStatus(stage, true);
-      const stepIdx = STATE_TO_STEP[stage];
-      if (stepIdx !== undefined) setPipelineStep(stepIdx, false);
-      if (LOG_LINES[stage]) addLog(LOG_LINES[stage]);
-    }
+// Advance pipeline visuals while the real status is "processing".
+// Ticks fire every STATUS_POLL_INTERVAL ms — thresholds are approximate hints.
+function advanceProcessingStage() {
+  processingTick++;
+  if (processingTick === 1) {
+    setStatus("processing", true);
+    setPipelineStep(2, false);
+    addLog(LOG_LINES.processing);
+  } else if (processingTick === 3) {
+    setPipelineStep(3, false);
+    addLog(LOG_LINES.demucs);
+  } else if (processingTick === 6) {
+    setPipelineStep(4, false);
+    addLog(LOG_LINES.uploading_results);
   }
 }
 
@@ -331,11 +312,33 @@ function jobFinished() {
   setPipelineStep(5, true);
   addLog(LOG_LINES.finished);
 
-  // Copy final time to download panel
   if (finalTimeEl) finalTimeEl.textContent = elapsedEl.textContent;
 
   saveJobToStorage();
   showDownloadPanel();
+}
+
+function jobFailed(errorMsg) {
+  clearInterval(statusPoller);
+  clearInterval(elapsedTimer);
+
+  setStatus("processing failed", false);
+
+  // Turn the status badge red
+  const badge = document.getElementById("status-badge");
+  badge.classList.remove("bg-slate-100", "text-slate-500");
+  badge.classList.add("bg-red-50", "text-red-600");
+
+  // Show error banner
+  jobErrorEl.classList.remove("hidden");
+  jobErrorMsgEl.textContent = errorMsg;
+
+  addLog("[ERROR]   " + errorMsg);
+}
+
+function updateQueueCounts(waiting, processing) {
+  jobsWaitingEl.textContent    = waiting;
+  jobsProcessingEl.textContent = processing;
 }
 
 // ─── localStorage persistence ─────────────────────────────────────────────────
@@ -356,7 +359,6 @@ function restoreJobFromStorage() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const job = JSON.parse(raw);
-    // Discard if older than 24 hours
     if (Date.now() - job.savedAt > 24 * 60 * 60 * 1000) return;
     currentHash = job.hash;
     jobIdEl.textContent = job.hash;
@@ -368,38 +370,26 @@ function restoreJobFromStorage() {
   } catch (_) {}
 }
 
-// ─── Queue polling ────────────────────────────────────────────────────────────
-function startQueuePoller() {
-  pollQueue();
-  queuePoller = setInterval(pollQueue, QUEUE_POLL_INTERVAL);
-}
-
+// ─── Queue badge polling (global, runs independently of any job) ──────────────
 async function pollQueue() {
   try {
-    const res  = await fetch(`${API_BASE}/apiv1/queue`);
+    const res = await fetch(`${API_BASE}/apiv1/queue`, { signal: AbortSignal.timeout(4000) });
     if (!res.ok) return;
-    const data  = await res.json();
-    const queue = data.queue || [];
-    const count = queue.length;
-
-    queueBadge.textContent   = `queue: ${count}`;
-    queueCountEl.textContent = count;
-
-    if (currentHash) {
-      const pos = queue.indexOf(currentHash);
-      queuePosEl.textContent = pos === -1 ? "processing" : `#${pos + 1}`;
-    }
-  } catch (_) { /* silently ignore */ }
+    const data       = await res.json();
+    const waiting    = data.jobs_waiting    ?? (data.queue || []).length;
+    const processing = data.jobs_processing ?? 0;
+    queueBadge.textContent = `waiting: ${waiting} · active: ${processing}`;
+  } catch (_) {}
 }
 
-// ─── Download panel ───────────────────────────────────────────────────────────
-let activeAudio = null; // only one stem plays at a time
+pollQueue();
+setInterval(pollQueue, QUEUE_POLL_INTERVAL);
 
+// ─── Download panel ───────────────────────────────────────────────────────────
 function showDownloadPanel() {
   downloadSection.classList.remove("hidden");
   downloadSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
   renderStemCards(currentHash);
-  clearInterval(queuePoller);
 }
 
 function renderStemCards(hash) {
@@ -435,14 +425,12 @@ function renderStemCards(hash) {
         <audio controls class="w-full" style="height:36px;"></audio>
       </div>`;
 
-    // Play button
     const playBtn  = card.querySelector(".play-btn");
     const audioWrap= card.querySelector(".audio-wrap");
     const audio    = card.querySelector("audio");
 
     playBtn.addEventListener("click", () => {
       const isOpen = !audioWrap.classList.contains("hidden");
-      // Collapse any other open players
       document.querySelectorAll(".audio-wrap").forEach(w => {
         if (w !== audioWrap) { w.classList.add("hidden"); w.querySelector("audio").pause(); }
       });
@@ -469,7 +457,6 @@ function renderStemCards(hash) {
       playBtn.childNodes[2].textContent = " Play";
     });
 
-    // Download button — fetch as blob so browser forces a save dialog
     const dlBtn = card.querySelector(".dl-btn");
     dlBtn.addEventListener("click", () => forceDownload(url, `${stem.key}.mp3`, dlBtn));
 
@@ -529,26 +516,28 @@ function showJobSection() {
 function resetJobUI() {
   clearInterval(elapsedTimer);
   clearInterval(statusPoller);
-  clearInterval(queuePoller);
   try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
-  currentHash     = null;
-  stateProgressed = 0;
-  lastKnownState  = "queued";
+  currentHash    = null;
+  processingTick = 0;
+
+  // Reset status badge styling
+  const badge = document.getElementById("status-badge");
+  badge.classList.remove("bg-red-50", "text-red-600");
+  badge.classList.add("bg-slate-100", "text-slate-500");
+
+  // Hide error banner
+  jobErrorEl.classList.add("hidden");
 
   resetPipeline();
-  logPanel.innerHTML      = "";
+  logPanel.innerHTML       = "";
   downloadSection.classList.add("hidden");
-  downloadGrid.innerHTML  = "";
-  jobIdEl.textContent     = "—";
-  elapsedEl.textContent   = "00:00";
+  downloadGrid.innerHTML   = "";
+  jobIdEl.textContent      = "—";
+  elapsedEl.textContent    = "00:00";
   if (finalTimeEl) finalTimeEl.textContent = "—";
-  queuePosEl.textContent  = "—";
-  queueCountEl.textContent = "—";
+  jobsWaitingEl.textContent    = "—";
+  jobsProcessingEl.textContent = "—";
 }
-
-// ─── Initial queue poll ───────────────────────────────────────────────────────
-pollQueue();
-setInterval(pollQueue, QUEUE_POLL_INTERVAL);
 
 // ─── Restore last completed job from localStorage (survives page refresh) ─────
 restoreJobFromStorage();

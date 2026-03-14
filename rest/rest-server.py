@@ -34,6 +34,8 @@ PORT            = int(os.getenv("REST_PORT", 5001))
 
 HOSTNAME = socket.gethostname()
 
+JOB_TTL = 86400  # seconds — job status keys expire after 24 h
+
 # ---------------------------------------------------------------------------
 # Clients
 # ---------------------------------------------------------------------------
@@ -141,7 +143,15 @@ def separate(req: SeparateRequest):
         log("error", f"MinIO upload failed for {songhash}: {exc}")
         raise HTTPException(status_code=500, detail="Object storage error")
 
-    # 4. Enqueue job to Redis
+    # 4. Write job status BEFORE enqueuing so the worker never picks up a job
+    #    whose status key doesn't exist yet.
+    try:
+        redis_client.hset(f"job:{songhash}", mapping={"status": "queued", "error": ""})
+        redis_client.expire(f"job:{songhash}", JOB_TTL)
+    except Exception as exc:
+        log("error", f"Failed to write job status for {songhash}: {exc}")
+
+    # 5. Enqueue job to Redis
     job = {
         "hash": songhash,
         "model": req.model or "mdx_extra_q",
@@ -170,7 +180,46 @@ def queue():
         except Exception:
             hashes.append(item.decode("utf-8"))
 
-    return {"queue": hashes}
+    try:
+        jobs_processing = int(redis_client.scard("jobs:processing"))
+    except Exception:
+        jobs_processing = 0
+
+    return {
+        "queue":           hashes,
+        "jobs_waiting":    len(hashes),
+        "jobs_processing": jobs_processing,
+    }
+
+
+@app.get("/apiv1/status/{songhash}")
+def job_status(songhash: str):
+    """Return the current status of a specific job."""
+    try:
+        raw = redis_client.hgetall(f"job:{songhash}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    if not raw:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # hgetall returns bytes — decode
+    record = {k.decode(): v.decode() for k, v in raw.items()}
+
+    try:
+        jobs_waiting    = int(redis_client.llen("toWorker"))
+        jobs_processing = int(redis_client.scard("jobs:processing"))
+    except Exception:
+        jobs_waiting    = 0
+        jobs_processing = 0
+
+    return {
+        "hash":            songhash,
+        "status":          record.get("status", "unknown"),
+        "error":           record.get("error") or None,
+        "jobs_waiting":    jobs_waiting,
+        "jobs_processing": jobs_processing,
+    }
 
 
 VALID_TRACKS = {"bass", "drums", "vocals", "other"}
