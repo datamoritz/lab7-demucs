@@ -296,7 +296,8 @@ function startStatusPoller() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/apiv1/track/${currentHash}/vocals`, { method: "HEAD" });
+      const res = await fetch(`${API_BASE}/apiv1/track/${currentHash}/vocals`);
+      res.body?.cancel(); // status received — discard audio body immediately
       if (res.ok) {
         jobFinished();
         return;
