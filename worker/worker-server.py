@@ -55,7 +55,7 @@ def log(level: str, msg: str) -> None:
 # ---------------------------------------------------------------------------
 def process(job: dict) -> None:
     songhash  = job["hash"]
-    model     = job.get("model", "htdemucs")
+    model     = job.get("model", "mdx_extra_q")
     bucket    = job["bucket"]
     input_key = job["key"]          # e.g. "queue/<hash>.mp3"
     callback  = job.get("callback")

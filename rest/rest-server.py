@@ -111,7 +111,7 @@ def detailed_health():
 
 class SeparateRequest(BaseModel):
     mp3: str                      # base64-encoded MP3 bytes
-    model: Optional[str] = "htdemucs"
+    model: Optional[str] = "mdx_extra_q"
     callback: Optional[Any] = None
 
 
@@ -144,7 +144,7 @@ def separate(req: SeparateRequest):
     # 4. Enqueue job to Redis
     job = {
         "hash": songhash,
-        "model": req.model or "htdemucs",
+        "model": req.model or "mdx_extra_q",
         "callback": req.callback,
         "bucket": MINIO_BUCKET,
         "key": object_key,
