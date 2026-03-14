@@ -31,13 +31,16 @@
     ::-webkit-scrollbar-thumb { background: #3f3f5a; border-radius: 3px; }
 
     /* System status dots */
-    .dot-ok   { background-color: #22c55e; box-shadow: 0 0 5px rgba(34,197,94,0.5); }
-    .dot-err  { background-color: #ef4444; }
+    .dot-ok   { background-color: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.15), 0 0 8px rgba(34,197,94,0.5); }
+    .dot-err  { background-color: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.15); }
     .dot-idle { background-color: #94a3b8; }
     .dot-pulse { animation: dotPulse 2s ease-in-out infinite; }
     @keyframes dotPulse {
       0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
     }
+
+    /* Audio player styling */
+    audio { accent-color: #6366f1; }
 
     /* Pipeline steps */
     .pipeline-step-dot {
@@ -91,7 +94,7 @@
         AI-powered stem separation using a distributed pipeline.
         Uploads to <span class="font-medium text-slate-700">FastAPI</span>,
         queues via <span class="font-medium text-slate-700">Redis</span>,
-        processes on <span class="font-medium text-slate-700">Kubernetes workers</span> using Demucs —
+        processes on a <span class="font-medium text-slate-700">Docker Compose worker</span> using Demucs —
         separating into <span class="font-medium text-slate-700">vocals, drums, bass</span> and <span class="font-medium text-slate-700">other</span>.
       </p>
       <ol class="flex flex-wrap gap-x-6 gap-y-2">
@@ -323,7 +326,7 @@
         </div>
         <div>
           <h2 class="font-semibold text-slate-800 text-sm">Separation complete</h2>
-          <p class="text-xs text-slate-400 mt-0.5">Click any stem to download</p>
+          <p class="text-xs text-slate-400 mt-0.5">Play in-page or save each stem</p>
         </div>
         <div class="ml-auto text-right">
           <p class="text-xs text-slate-400">Processing time</p>
@@ -342,10 +345,10 @@
       <div class="flex flex-wrap justify-center gap-2">
         <span class="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono">FastAPI REST API</span>
         <span class="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono">Redis queue</span>
-        <span class="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono">Kubernetes worker pods</span>
+        <span class="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono">Docker Compose worker</span>
         <span class="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono">Demucs model</span>
         <span class="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono">MinIO object storage</span>
-        <span class="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono">NGINX ingress</span>
+        <span class="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono">Hetzner VPS</span>
       </div>
     </div>
   </footer>

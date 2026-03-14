@@ -8,10 +8,10 @@ const SYS_POLL_INTERVAL    = 10000;
 
 // ─── Stem definitions ────────────────────────────────────────────────────────
 const STEMS = [
-  { key: "vocals", label: "Vocals", icon: "🎤", color: "bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100" },
-  { key: "drums",  label: "Drums",  icon: "🥁", color: "bg-amber-50  text-amber-700  border-amber-200  hover:bg-amber-100"  },
-  { key: "bass",   label: "Bass",   icon: "🎸", color: "bg-sky-50    text-sky-700    border-sky-200    hover:bg-sky-100"    },
-  { key: "other",  label: "Other",  icon: "🎹", color: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" },
+  { key: "vocals", label: "Vocals", icon: "🎤", bg: "bg-violet-50",  text: "text-violet-700",  border: "border-violet-200"  },
+  { key: "drums",  label: "Drums",  icon: "🥁", bg: "bg-amber-50",   text: "text-amber-700",   border: "border-amber-200"   },
+  { key: "bass",   label: "Bass",   icon: "🎸", bg: "bg-sky-50",     text: "text-sky-700",     border: "border-sky-200"     },
+  { key: "other",  label: "Other",  icon: "🎹", bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
 ];
 
 // ─── Log lines per stage ─────────────────────────────────────────────────────
@@ -75,9 +75,10 @@ function setSysStatus(id, state, label) {
   const dot = el.querySelector(".sys-dot");
   const lbl = el.querySelector(".sys-label");
   dot.classList.remove("dot-ok", "dot-err", "dot-idle", "dot-pulse");
-  if (state === "ok")  { dot.classList.add("dot-ok");  el.classList.replace("text-slate-400", "text-slate-600"); }
-  if (state === "err") { dot.classList.add("dot-err");  el.classList.replace("text-slate-400", "text-red-500"); }
-  if (state === "idle"){ dot.classList.add("dot-idle"); }
+  lbl.classList.remove("text-emerald-600", "text-red-500", "text-slate-400");
+  if (state === "ok")  { dot.classList.add("dot-ok");   lbl.classList.add("text-emerald-600"); }
+  if (state === "err") { dot.classList.add("dot-err");  lbl.classList.add("text-red-500");     }
+  if (state === "idle"){ dot.classList.add("dot-idle"); lbl.classList.add("text-slate-400");   }
   lbl.textContent = label;
 }
 
@@ -333,7 +334,38 @@ function jobFinished() {
   // Copy final time to download panel
   if (finalTimeEl) finalTimeEl.textContent = elapsedEl.textContent;
 
+  saveJobToStorage();
   showDownloadPanel();
+}
+
+// ─── localStorage persistence ─────────────────────────────────────────────────
+const STORAGE_KEY = "stemsplit_last_job";
+
+function saveJobToStorage() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      hash:      currentHash,
+      finalTime: elapsedEl.textContent,
+      savedAt:   Date.now(),
+    }));
+  } catch (_) {}
+}
+
+function restoreJobFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const job = JSON.parse(raw);
+    // Discard if older than 24 hours
+    if (Date.now() - job.savedAt > 24 * 60 * 60 * 1000) return;
+    currentHash = job.hash;
+    jobIdEl.textContent = job.hash;
+    if (finalTimeEl) finalTimeEl.textContent = job.finalTime;
+    showJobSection();
+    setPipelineStep(5, true);
+    setStatus("finished", false);
+    showDownloadPanel();
+  } catch (_) {}
 }
 
 // ─── Queue polling ────────────────────────────────────────────────────────────
@@ -361,31 +393,108 @@ async function pollQueue() {
 }
 
 // ─── Download panel ───────────────────────────────────────────────────────────
+let activeAudio = null; // only one stem plays at a time
+
 function showDownloadPanel() {
   downloadSection.classList.remove("hidden");
   downloadSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  renderStemCards(currentHash);
+  clearInterval(queuePoller);
+}
 
+function renderStemCards(hash) {
   downloadGrid.innerHTML = "";
   STEMS.forEach(stem => {
-    const url = `${API_BASE}/apiv1/track/${currentHash}/${stem.key}`;
-    const btn = document.createElement("a");
-    btn.href      = url;
-    btn.download  = `${stem.key}.mp3`;
-    btn.className = `flex items-center gap-3 px-4 py-4 rounded-xl border font-medium text-sm
-                     transition-colors cursor-pointer ${stem.color}`;
-    btn.innerHTML = `
-      <span class="text-xl leading-none">${stem.icon}</span>
-      <div class="text-left">
-        <p class="font-semibold text-sm">Download ${stem.label}</p>
-        <p class="text-xs opacity-50 font-mono mt-0.5">${stem.key}.mp3</p>
-      </div>
-      <svg class="w-4 h-4 ml-auto opacity-40 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
-      </svg>`;
-    downloadGrid.appendChild(btn);
-  });
+    const url  = `${API_BASE}/apiv1/track/${hash}/${stem.key}`;
+    const card = document.createElement("div");
+    card.className = `rounded-xl border ${stem.border} overflow-hidden`;
 
-  clearInterval(queuePoller);
+    card.innerHTML = `
+      <div class="flex items-center gap-3 px-4 py-3 ${stem.bg}">
+        <span class="text-lg leading-none">${stem.icon}</span>
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold text-sm ${stem.text}">${stem.label}</p>
+          <p class="text-[11px] opacity-50 font-mono truncate">${stem.key}.mp3</p>
+        </div>
+        <button data-action="play"
+                class="play-btn flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+                       bg-white/70 hover:bg-white transition-colors ${stem.text} flex-shrink-0">
+          <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>
+          Play
+        </button>
+        <button data-action="download"
+                class="dl-btn flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+                       bg-white/70 hover:bg-white transition-colors ${stem.text} flex-shrink-0">
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v13m0 0l-4-4m4 4l4-4M3 18h18"/>
+          </svg>
+          Save
+        </button>
+      </div>
+      <div class="audio-wrap hidden px-4 py-2.5 bg-white border-t ${stem.border}">
+        <audio controls class="w-full" style="height:36px;"></audio>
+      </div>`;
+
+    // Play button
+    const playBtn  = card.querySelector(".play-btn");
+    const audioWrap= card.querySelector(".audio-wrap");
+    const audio    = card.querySelector("audio");
+
+    playBtn.addEventListener("click", () => {
+      const isOpen = !audioWrap.classList.contains("hidden");
+      // Collapse any other open players
+      document.querySelectorAll(".audio-wrap").forEach(w => {
+        if (w !== audioWrap) { w.classList.add("hidden"); w.querySelector("audio").pause(); }
+      });
+      document.querySelectorAll(".play-btn").forEach(b => {
+        if (b !== playBtn) b.innerHTML = b.innerHTML.replace("Stop", "Play")
+                                                    .replace('d="M6 4h4v16H6zM14 4h4v16h-4z"', 'd="M5 3l14 9-14 9V3z"');
+      });
+      if (isOpen) {
+        audioWrap.classList.add("hidden");
+        audio.pause();
+        playBtn.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
+        playBtn.childNodes[2].textContent = " Play";
+      } else {
+        if (!audio.src) audio.src = url;
+        audioWrap.classList.remove("hidden");
+        audio.play();
+        playBtn.querySelector("svg path").setAttribute("d", "M6 4h4v16H6zM14 4h4v16h-4z");
+        playBtn.childNodes[2].textContent = " Stop";
+      }
+    });
+    audio.addEventListener("ended", () => {
+      audioWrap.classList.add("hidden");
+      playBtn.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
+      playBtn.childNodes[2].textContent = " Play";
+    });
+
+    // Download button — fetch as blob so browser forces a save dialog
+    const dlBtn = card.querySelector(".dl-btn");
+    dlBtn.addEventListener("click", () => forceDownload(url, `${stem.key}.mp3`, dlBtn));
+
+    downloadGrid.appendChild(card);
+  });
+}
+
+async function forceDownload(url, filename, btn) {
+  const original = btn.innerHTML;
+  btn.textContent = "…";
+  btn.disabled = true;
+  try {
+    const res  = await fetch(url);
+    const blob = await res.blob();
+    const a    = document.createElement("a");
+    a.href     = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 15000);
+  } catch (err) {
+    alert("Download failed: " + err.message);
+  } finally {
+    btn.innerHTML = original;
+    btn.disabled  = false;
+  }
 }
 
 // ─── Elapsed timer ────────────────────────────────────────────────────────────
@@ -421,6 +530,7 @@ function resetJobUI() {
   clearInterval(elapsedTimer);
   clearInterval(statusPoller);
   clearInterval(queuePoller);
+  try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
   currentHash     = null;
   stateProgressed = 0;
   lastKnownState  = "queued";
@@ -439,3 +549,6 @@ function resetJobUI() {
 // ─── Initial queue poll ───────────────────────────────────────────────────────
 pollQueue();
 setInterval(pollQueue, QUEUE_POLL_INTERVAL);
+
+// ─── Restore last completed job from localStorage (survives page refresh) ─────
+restoreJobFromStorage();
