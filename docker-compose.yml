@@ -94,6 +94,8 @@ services:
     mem_limit: 512m
     ports:
       - "127.0.0.1:5001:5001"   # Localhost-only: for server-side curl tests
+    volumes:
+      - ./data:/srv/data:ro     # Sample audio files (read-only; update with git pull)
     environment:
       REDIS_HOST:       redis
       REDIS_PORT:       6379

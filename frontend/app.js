@@ -250,6 +250,36 @@ uploadBtn.addEventListener("click", async () => {
   startStatusPoller();
 });
 
+// ─── Sample demo ─────────────────────────────────────────────────────────────
+async function runSample(sampleId) {
+  resetJobUI();
+  showJobSection();
+  setStatus("submitting sample", true);
+  setPipelineStep(0, false);
+  addLog(`[REST]    POST ${API_BASE}/apiv1/sample/${sampleId}`);
+
+  let hash;
+  try {
+    const res = await fetch(`${API_BASE}/apiv1/sample/${sampleId}`, { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    hash = data.hash;
+  } catch (err) {
+    addLog("[ERROR]   Request failed: " + err.message);
+    setStatus("connection error", false);
+    return;
+  }
+
+  currentHash = hash;
+  jobIdEl.textContent = hash;
+  addLog("[REST]    Sample job submitted → hash received");
+  addLog(`[REST]    Job ID: ${hash}`);
+
+  startTime    = Date.now();
+  elapsedTimer = setInterval(updateElapsed, 1000);
+  startStatusPoller();
+}
+
 // ─── File → base64 ───────────────────────────────────────────────────────────
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {

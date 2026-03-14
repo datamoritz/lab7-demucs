@@ -32,9 +32,16 @@ MINIO_BUCKET    = os.getenv("MINIO_BUCKET", "demucs-bucket")
 MINIO_SECURE    = os.getenv("MINIO_SECURE", "false").lower() == "true"
 PORT            = int(os.getenv("REST_PORT", 5001))
 
-HOSTNAME = socket.gethostname()
+HOSTNAME    = socket.gethostname()
 
-JOB_TTL = 86400  # seconds — job status keys expire after 24 h
+JOB_TTL     = 86400  # seconds — job status keys expire after 24 h
+SAMPLES_DIR = os.getenv("SAMPLES_DIR", "/srv/data")
+
+# Known sample files — key is the public sample ID, value is the filename in SAMPLES_DIR
+SAMPLE_FILES = {
+    "short": "short-dreams.mp3",
+    "long":  "Opalite.mp3",
+}
 
 # ---------------------------------------------------------------------------
 # Clients
@@ -227,6 +234,56 @@ def job_status(songhash: str):
         "jobs_waiting":    jobs_waiting,
         "jobs_processing": jobs_processing,
     }
+
+
+@app.post("/apiv1/sample/{sample_id}")
+def run_sample(sample_id: str):
+    """Enqueue a pre-loaded sample file without requiring a client upload."""
+    if sample_id not in SAMPLE_FILES:
+        raise HTTPException(status_code=404, detail=f"Unknown sample '{sample_id}'. Valid: {sorted(SAMPLE_FILES)}")
+
+    path = os.path.join(SAMPLES_DIR, SAMPLE_FILES[sample_id])
+    try:
+        with open(path, "rb") as f:
+            mp3_bytes = f.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Sample file not found on server: {SAMPLE_FILES[sample_id]}")
+
+    songhash   = hashlib.sha224(mp3_bytes).hexdigest()
+    object_key = f"queue/{songhash}.mp3"
+
+    ensure_bucket()
+    try:
+        minio_client.put_object(
+            MINIO_BUCKET, object_key, BytesIO(mp3_bytes),
+            length=len(mp3_bytes), content_type="audio/mpeg",
+        )
+    except S3Error as exc:
+        log("error", f"MinIO upload failed for sample '{sample_id}': {exc}")
+        raise HTTPException(status_code=500, detail="Object storage error")
+
+    try:
+        redis_client.hset(f"job:{songhash}", mapping={
+            "status":        "queued",
+            "current_stage": "queued",
+            "stage_message": "Waiting in queue",
+            "error":         "",
+        })
+        redis_client.expire(f"job:{songhash}", JOB_TTL)
+    except Exception as exc:
+        log("error", f"Failed to write job status for sample '{sample_id}': {exc}")
+
+    job = {
+        "hash":     songhash,
+        "model":    "mdx_extra_q",
+        "callback": None,
+        "bucket":   MINIO_BUCKET,
+        "key":      object_key,
+    }
+    redis_client.lpush("toWorker", json.dumps(job))
+    log("info", f"Sample '{sample_id}' enqueued as {songhash} ({len(mp3_bytes)} bytes)")
+
+    return {"hash": songhash, "reason": f"Sample '{sample_id}' enqueued for separation"}
 
 
 VALID_TRACKS = {"bass", "drums", "vocals", "other"}
