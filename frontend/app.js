@@ -446,25 +446,23 @@ function renderStemCards(hash) {
     card.className = `rounded-xl border ${stem.border} overflow-hidden`;
 
     card.innerHTML = `
-      <div class="flex items-center gap-3 px-4 py-3 ${stem.bg}">
+      <div class="flex items-center gap-2 px-4 py-3 ${stem.bg}">
         <span class="text-lg leading-none">${stem.icon}</span>
         <div class="flex-1 min-w-0">
           <p class="font-semibold text-sm ${stem.text}">${stem.label}</p>
           <p class="text-[11px] opacity-50 font-mono truncate">${stem.key}.mp3</p>
         </div>
         <button data-action="play"
-                class="play-btn flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+                class="play-btn w-8 h-8 flex items-center justify-center rounded-lg
                        bg-white/70 hover:bg-white transition-colors ${stem.text} flex-shrink-0">
-          <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>
-          Play
+          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>
         </button>
         <button data-action="download"
-                class="dl-btn flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+                class="dl-btn w-8 h-8 flex items-center justify-center rounded-lg
                        bg-white/70 hover:bg-white transition-colors ${stem.text} flex-shrink-0">
-          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v13m0 0l-4-4m4 4l4-4M3 18h18"/>
           </svg>
-          Save
         </button>
       </div>
       <div class="audio-wrap hidden px-4 py-2.5 bg-white border-t ${stem.border}">
@@ -481,26 +479,22 @@ function renderStemCards(hash) {
         if (w !== audioWrap) { w.classList.add("hidden"); w.querySelector("audio").pause(); }
       });
       document.querySelectorAll(".play-btn").forEach(b => {
-        if (b !== playBtn) b.innerHTML = b.innerHTML.replace("Stop", "Play")
-                                                    .replace('d="M6 4h4v16H6zM14 4h4v16h-4z"', 'd="M5 3l14 9-14 9V3z"');
+        if (b !== playBtn) b.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
       });
       if (isOpen) {
         audioWrap.classList.add("hidden");
         audio.pause();
         playBtn.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
-        playBtn.childNodes[2].textContent = " Play";
       } else {
         if (!audio.src) audio.src = url;
         audioWrap.classList.remove("hidden");
         audio.play();
         playBtn.querySelector("svg path").setAttribute("d", "M6 4h4v16H6zM14 4h4v16h-4z");
-        playBtn.childNodes[2].textContent = " Stop";
       }
     });
     audio.addEventListener("ended", () => {
       audioWrap.classList.add("hidden");
       playBtn.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
-      playBtn.childNodes[2].textContent = " Play";
     });
 
     const dlBtn = card.querySelector(".dl-btn");
@@ -517,25 +511,23 @@ function renderDerivedMix(hash) {
   card.className = "rounded-xl border border-indigo-200 overflow-hidden";
 
   card.innerHTML = `
-    <div class="flex items-center gap-3 px-4 py-3 bg-indigo-50">
+    <div class="flex items-center gap-2 px-4 py-3 bg-indigo-50">
       <span class="text-lg leading-none">🎼</span>
       <div class="flex-1 min-w-0">
         <p class="font-semibold text-sm text-indigo-700">Instrumental</p>
         <p class="text-[11px] opacity-50 font-mono truncate">no vocals · bass + drums + other</p>
       </div>
       <button data-action="play"
-              class="play-btn flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+              class="play-btn w-8 h-8 flex items-center justify-center rounded-lg
                      bg-white/70 hover:bg-white transition-colors text-indigo-700 flex-shrink-0">
-        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>
-        Play
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>
       </button>
       <button data-action="download"
-              class="dl-btn flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg
+              class="dl-btn w-8 h-8 flex items-center justify-center rounded-lg
                      bg-white/70 hover:bg-white transition-colors text-indigo-700 flex-shrink-0">
-        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v13m0 0l-4-4m4 4l4-4M3 18h18"/>
         </svg>
-        Save
       </button>
     </div>
     <div class="audio-wrap hidden px-4 py-2.5 bg-white border-t border-indigo-200">
@@ -552,26 +544,22 @@ function renderDerivedMix(hash) {
       if (w !== audioWrap) { w.classList.add("hidden"); w.querySelector("audio").pause(); }
     });
     document.querySelectorAll(".play-btn").forEach(b => {
-      if (b !== playBtn) b.innerHTML = b.innerHTML.replace("Stop", "Play")
-                                                  .replace('d="M6 4h4v16H6zM14 4h4v16h-4z"', 'd="M5 3l14 9-14 9V3z"');
+      if (b !== playBtn) b.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
     });
     if (isOpen) {
       audioWrap.classList.add("hidden");
       audio.pause();
       playBtn.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
-      playBtn.childNodes[2].textContent = " Play";
     } else {
       if (!audio.src) audio.src = url;
       audioWrap.classList.remove("hidden");
       audio.play();
       playBtn.querySelector("svg path").setAttribute("d", "M6 4h4v16H6zM14 4h4v16h-4z");
-      playBtn.childNodes[2].textContent = " Stop";
     }
   });
   audio.addEventListener("ended", () => {
     audioWrap.classList.add("hidden");
     playBtn.querySelector("svg path").setAttribute("d", "M5 3l14 9-14 9V3z");
-    playBtn.childNodes[2].textContent = " Play";
   });
 
   card.querySelector(".dl-btn").addEventListener("click", () =>
