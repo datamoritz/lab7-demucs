@@ -14,6 +14,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from io import BytesIO
 
 import redis
@@ -35,6 +37,10 @@ MINIO_SECURE  = os.getenv("MINIO_SECURE", "false").lower() == "true"
 HOSTNAME = socket.gethostname()
 PARTS    = ("bass", "drums", "vocals", "other")
 
+HEARTBEAT_KEY      = "worker:heartbeat"
+HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", 30))
+HEARTBEAT_TTL      = 120   # Redis auto-expires key if worker dies
+
 # Modal routing — disabled by default; set USE_MODAL=true in .env to enable
 USE_MODAL             = os.getenv("USE_MODAL", "false").lower() == "true"
 LOCAL_THRESHOLD_BYTES = int(os.getenv("LOCAL_THRESHOLD_BYTES", 200 * 1024))  # 200 KB
@@ -50,6 +56,59 @@ minio_client = Minio(
     secret_key=MINIO_SECRET,
     secure=MINIO_SECURE,
 )
+
+# ---------------------------------------------------------------------------
+# Heartbeat — background thread writes liveness + connectivity to Redis
+# ---------------------------------------------------------------------------
+def _heartbeat_loop() -> None:
+    """Every HEARTBEAT_INTERVAL seconds, probe Redis and MinIO and record results.
+
+    If the worker cannot reach Redis the heartbeat key stays absent/stale,
+    which the API interprets as 'worker unhealthy'.
+    """
+    minio_bucket = os.getenv("MINIO_BUCKET", "demucs-bucket")
+    while True:
+        redis_ok    = False
+        redis_error = ""
+        minio_ok    = False
+        minio_error = ""
+
+        try:
+            redis_client.ping()
+            redis_ok = True
+        except Exception as exc:
+            redis_error = str(exc)[:200]
+            print(f"{HOSTNAME}.worker.error:Heartbeat: Redis unreachable — {exc}", flush=True)
+
+        try:
+            minio_client.bucket_exists(minio_bucket)
+            minio_ok = True
+        except Exception as exc:
+            minio_error = str(exc)[:200]
+            print(f"{HOSTNAME}.worker.error:Heartbeat: MinIO unreachable — {exc}", flush=True)
+
+        if redis_ok:
+            try:
+                redis_client.hset(HEARTBEAT_KEY, mapping={
+                    "last_seen":   int(time.time()),
+                    "hostname":    HOSTNAME,
+                    "redis_ok":    "1",
+                    "minio_ok":    "1" if minio_ok else "0",
+                    "redis_error": "",
+                    "minio_error": minio_error,
+                })
+                redis_client.expire(HEARTBEAT_KEY, HEARTBEAT_TTL)
+            except Exception as exc:
+                print(f"{HOSTNAME}.worker.error:Heartbeat write failed: {exc}", flush=True)
+        else:
+            # Cannot write to Redis — heartbeat will be absent/stale; API detects this
+            print(
+                f"{HOSTNAME}.worker.error:Heartbeat skipped (Redis down): {redis_error}",
+                flush=True,
+            )
+
+        time.sleep(HEARTBEAT_INTERVAL)
+
 
 # ---------------------------------------------------------------------------
 # Logging helpers
@@ -307,6 +366,10 @@ def process(job: dict) -> None:
 # Main loop
 # ---------------------------------------------------------------------------
 def main() -> None:
+    # Start heartbeat before anything else so the API can see the worker immediately
+    hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name="heartbeat")
+    hb_thread.start()
+
     # Clear stale processing entries from a previous crash/restart
     try:
         redis_client.delete("jobs:processing")

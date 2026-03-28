@@ -5,6 +5,7 @@ const QUEUE_POLL_INTERVAL  = 5000;
 const STATUS_POLL_INTERVAL = 3000;
 const JOB_TIMEOUT_MS       = 30 * 60 * 1000;
 const SYS_POLL_INTERVAL    = 10000;
+const STALL_THRESHOLD_MS   = 45000;  // warn if job stays "queued" this long
 
 // ─── Stem definitions ────────────────────────────────────────────────────────
 const STEMS = [
@@ -48,6 +49,8 @@ let elapsedTimer    = null;
 let statusPoller    = null;
 let lastKnownStage  = "";   // tracks last displayed stage to avoid duplicate log entries
 let activePipeStep  = -1;
+let queuedSince     = null; // timestamp when current job entered "queued" state
+let stallWarned     = false;
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 const dropZone         = document.getElementById("drop-zone");
@@ -87,39 +90,74 @@ function setSysStatus(id, state, label) {
 }
 
 async function checkSystemStatus() {
-  let apiOk = false;
-  let redisOk = true;
-  let workerCount = null;
-  let minioOk = false;
+  let apiOk  = false;
+  let data   = {};
   try {
     const res = await fetch(`${API_BASE}/apiv1/health`, { signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
-      const data  = await res.json();
-      apiOk       = true;
-      redisOk     = data.redis   ?? true;
-      minioOk     = data.minio   ?? true;
-      workerCount = data.workers ?? null;
-    }
+    if (res.ok) { apiOk = true; data = await res.json(); }
   } catch (_) {
     try {
       const res = await fetch(`${API_BASE}/apiv1/queue`, { signal: AbortSignal.timeout(4000) });
-      if (res.ok) { apiOk = true; redisOk = true; minioOk = true; }
+      if (res.ok) apiOk = true;
     } catch (_) {}
   }
 
-  if (apiOk) {
-    setSysStatus("sys-api",     "ok",  "running");
-    setSysStatus("sys-redis",   redisOk ? "ok" : "err",  redisOk ? "connected" : "unreachable");
-    setSysStatus("sys-minio",   minioOk ? "ok" : "err",  minioOk ? "connected" : "unreachable");
-    setSysStatus("sys-k8s",     "ok",  "Docker Compose");
-    setSysStatus("sys-workers", "ok",
-      workerCount !== null ? `${workerCount} active` : "1 active");
-  } else {
+  if (!apiOk) {
     setSysStatus("sys-api",     "err",  "unreachable");
     setSysStatus("sys-redis",   "idle", "unknown");
     setSysStatus("sys-minio",   "idle", "unknown");
     setSysStatus("sys-k8s",     "idle", "unknown");
     setSysStatus("sys-workers", "idle", "unknown");
+    return;
+  }
+
+  const redisOk = data.redis ?? false;
+  const minioOk = data.minio ?? false;
+
+  setSysStatus("sys-api", "ok", "running");
+  setSysStatus("sys-k8s", "ok", "Docker Compose");
+
+  // Redis — distinguish API→Redis from worker→Redis
+  if (!redisOk) {
+    setSysStatus("sys-redis", "err", "unreachable");
+  } else if (data.worker_seen && !data.worker_stale && data.worker_redis_ok === false) {
+    setSysStatus("sys-redis", "err", "API ok · worker cannot connect");
+  } else {
+    setSysStatus("sys-redis", "ok", "connected");
+  }
+
+  // MinIO
+  if (!minioOk) {
+    setSysStatus("sys-minio", "err", "unreachable");
+  } else if (data.worker_seen && !data.worker_stale && data.worker_minio_ok === false) {
+    setSysStatus("sys-minio", "err", "API ok · worker cannot connect");
+  } else {
+    setSysStatus("sys-minio", "ok", "connected");
+  }
+
+  // Worker — use real heartbeat data
+  const workerSeen    = data.worker_seen    ?? false;
+  const workerStale   = data.worker_stale   ?? true;
+  const workerRedisOk = data.worker_redis_ok ?? false;
+  const workerLastAgo = data.worker_last_seen_ago ?? null;
+  const workerError   = data.worker_error   ?? null;
+
+  if (!workerSeen) {
+    setSysStatus("sys-workers", "idle", "no heartbeat yet");
+  } else if (workerStale) {
+    const ago = workerLastAgo !== null ? `${workerLastAgo}s ago` : "unknown";
+    setSysStatus("sys-workers", "err", `not responding (last: ${ago})`);
+  } else if (!workerRedisOk) {
+    setSysStatus("sys-workers", "err", "Redis unreachable from worker");
+  } else {
+    setSysStatus("sys-workers", "ok", "connected");
+  }
+
+  // Surface queue stall prominently in the log if a job is active
+  if (data.queue_stalled && currentHash && !stallWarned) {
+    stallWarned = true;
+    addLog("[ERROR]   Queue stalled — jobs waiting but worker cannot dequeue");
+    if (workerError) addLog("[ERROR]   Worker error: " + workerError);
   }
 }
 
@@ -297,6 +335,8 @@ function startStatusPoller() {
   setStatus("queued", true);
   setPipelineStep(1, false);
   addLog(LOG_LINES.queued);
+  queuedSince = Date.now();
+  stallWarned = false;
 
   const deadline = Date.now() + JOB_TIMEOUT_MS;
 
@@ -328,6 +368,31 @@ function startStatusPoller() {
       jobFailed(data.error || data.stage_message || "Processing failed on the worker.");
     } else if (data.status === "processing" || data.status === "queued") {
       applyStage(data.current_stage, data.stage_message);
+
+      // Stall detection: job still queued past threshold → check worker health
+      if (data.status === "queued" && queuedSince !== null
+          && Date.now() - queuedSince > STALL_THRESHOLD_MS && !stallWarned) {
+        stallWarned = true;
+        const stalledSecs = Math.round((Date.now() - queuedSince) / 1000);
+        addLog(`[WARN]    Job queued ${stalledSecs}s with no worker pickup — checking worker health…`);
+        try {
+          const wRes = await fetch(`${API_BASE}/apiv1/worker-health`, {
+            signal: AbortSignal.timeout(4000),
+          });
+          if (wRes.ok) {
+            const w = await wRes.json();
+            if (!w.seen) {
+              addLog("[ERROR]   Worker has never reported a heartbeat — check worker container");
+            } else if (w.stale) {
+              addLog(`[ERROR]   Worker heartbeat stale (${w.last_seen_ago}s ago) — worker may be down`);
+            } else if (!w.redis_ok) {
+              const detail = w.error ? `: ${w.error}` : " (DNS / network failure)";
+              addLog("[ERROR]   Worker cannot connect to Redis" + detail);
+            }
+          }
+        } catch (_) {}
+        checkSystemStatus(); // refresh status badges
+      }
     }
   }, STATUS_POLL_INTERVAL);
 }
@@ -642,6 +707,8 @@ function resetJobUI() {
   try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
   currentHash       = null;
   lastKnownStage    = "";
+  queuedSince       = null;
+  stallWarned       = false;
 
   // Reset status badge styling
   const badge = document.getElementById("status-badge");

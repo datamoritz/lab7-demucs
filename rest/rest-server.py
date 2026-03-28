@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import sys
+import time
 from io import BytesIO
 from typing import Any, Optional
 
@@ -36,6 +37,9 @@ HOSTNAME    = socket.gethostname()
 
 JOB_TTL     = 86400  # seconds — job status keys expire after 24 h
 SAMPLES_DIR = os.getenv("SAMPLES_DIR", "/srv/data")
+
+HEARTBEAT_KEY        = "worker:heartbeat"
+HEARTBEAT_STALE_SECS = 90   # 3 missed heartbeats → worker considered unhealthy
 
 # Known sample files — key is the public sample ID, value is the filename in SAMPLES_DIR
 SAMPLE_FILES = {
@@ -101,10 +105,54 @@ def health():
     return {"status": "Music Separation Server running"}
 
 
+def _read_worker_heartbeat() -> dict:
+    """Read worker:heartbeat from Redis and return a normalised dict."""
+    now = int(time.time())
+    result: dict = {
+        "worker_seen":         False,
+        "worker_stale":        True,
+        "worker_redis_ok":     False,
+        "worker_minio_ok":     False,
+        "worker_last_seen_ago": None,
+        "worker_hostname":     None,
+        "worker_error":        None,
+    }
+    try:
+        raw = redis_client.hgetall(HEARTBEAT_KEY)
+        if raw:
+            hb  = {k.decode(): v.decode() for k, v in raw.items()}
+            age = now - int(hb.get("last_seen", 0))
+            result["worker_seen"]          = True
+            result["worker_stale"]         = age > HEARTBEAT_STALE_SECS
+            result["worker_last_seen_ago"] = age
+            result["worker_hostname"]      = hb.get("hostname")
+            result["worker_redis_ok"]      = hb.get("redis_ok") == "1"
+            result["worker_minio_ok"]      = hb.get("minio_ok") == "1"
+            err = hb.get("redis_error") or hb.get("minio_error") or None
+            result["worker_error"]         = err if err else None
+    except Exception:
+        pass
+    return result
+
+
 @app.get("/apiv1/health")
 def detailed_health():
     """Detailed health check used by the frontend status panel."""
-    status = {"api": True, "redis": False, "minio": False, "workers": 1, "k8s": False}
+    status: dict = {
+        "api":   True,
+        "redis": False,
+        "minio": False,
+        "k8s":   False,
+        # Worker fields — populated below
+        "workers":              0,
+        "worker_seen":          False,
+        "worker_stale":         True,
+        "worker_redis_ok":      False,
+        "worker_minio_ok":      False,
+        "worker_last_seen_ago": None,
+        "worker_error":         None,
+        "queue_stalled":        False,
+    }
     try:
         redis_client.ping()
         status["redis"] = True
@@ -115,7 +163,42 @@ def detailed_health():
         status["minio"] = True
     except Exception:
         pass
+
+    if status["redis"]:
+        hb = _read_worker_heartbeat()
+        status.update(hb)
+        if hb["worker_seen"] and not hb["worker_stale"] and hb["worker_redis_ok"]:
+            status["workers"] = 1
+        # Queue stall: jobs waiting but worker cannot dequeue them
+        try:
+            queue_len = int(redis_client.llen("toWorker"))
+            worker_healthy = (
+                hb["worker_seen"]
+                and not hb["worker_stale"]
+                and hb["worker_redis_ok"]
+            )
+            if queue_len > 0 and not worker_healthy:
+                status["queue_stalled"] = True
+        except Exception:
+            pass
+
     return status
+
+
+@app.get("/apiv1/worker-health")
+def worker_health():
+    """Detailed worker connectivity report — polled separately by the frontend."""
+    result = _read_worker_heartbeat()
+    # Rename keys to drop the "worker_" prefix for this dedicated endpoint
+    return {
+        "seen":          result["worker_seen"],
+        "stale":         result["worker_stale"],
+        "redis_ok":      result["worker_redis_ok"],
+        "minio_ok":      result["worker_minio_ok"],
+        "last_seen_ago": result["worker_last_seen_ago"],
+        "hostname":      result["worker_hostname"],
+        "error":         result["worker_error"],
+    }
 
 
 class SeparateRequest(BaseModel):
